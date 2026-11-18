@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp" android:height="24dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- Ícono pequeño blanco para la barra de notificaciones -->
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="16.49" android:strokeLineCap="round" android:fillColor="#00000000"
+            android:pathData="M66.35,27.13 A32.98,32.98 0 1,0 79.26,78.91" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M76.04,17.89 L58.10,18.97 L65.44,25.92 Z" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M83.46,30.75 L73.56,45.75 L71.21,35.91 Z" />
+        <path android:fillColor="#FFFFFFFF" android:pathData="M97.95,13.81 Q95.29,24.86 86.01,30.22 L70.91,37.04 L64.31,25.62 L77.77,15.94 Q87.05,10.59 97.95,13.81 Z" />
+</vector>
