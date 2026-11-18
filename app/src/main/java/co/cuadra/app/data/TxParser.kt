@@ -4,6 +4,21 @@ import java.text.Normalizer
 
 enum class Direction { IN, OUT }
 
+/** Estado de la transferencia, como en Fortu. */
+enum class TxStatus {
+    /** La plata ya llegó / se envió bien. */
+    APROBADA,
+    /** El banco la está procesando (ej. ACH a otro banco, se abona en el siguiente ciclo). */
+    EN_PROCESO,
+    /** Enviada a alguien que todavía no la ha reclamado (ej. "plata por cobrar" de Nequi). */
+    PENDIENTE_COBRO,
+    /** Rechazada, devuelta, reversada o fallida: la plata NO llegó. */
+    RECHAZADA;
+
+    /** Orden en que puede cambiar: En proceso / Por cobrar → Aprobada → Rechazada (devuelta). */
+    val rank: Int get() = when (this) { EN_PROCESO, PENDIENTE_COBRO -> 1; APROBADA -> 2; RECHAZADA -> 3 }
+}
+
 data class ParsedTx(
     val amount: Long,
     val direction: Direction,
@@ -11,6 +26,7 @@ data class ParsedTx(
     val bank: String?,
     val last4: String?,
     val reference: String?,
+    val status: TxStatus = TxStatus.APROBADA,
 )
 
 /**
@@ -31,6 +47,19 @@ object TxParser {
         "clave dinamica", "codigo de seguridad", "otp"
     )
 
+    /**
+     * Señales FUERTES de que te llegó plata (te pagaron por QR, con tarjeta, por Nequi, etc.).
+     * Si aparecen, no se descarta aunque el mensaje diga "tarjeta" o "QR": es un cobro tuyo.
+     */
+    private val STRONG_IN = listOf(
+        "recibiste", "te llego", "te llegaron", "te envio", "te enviaron", "te transfirio", "te transfirieron",
+        "te pagaron", "te pago ", "has recibido", "recibio una transferencia", "tienes una transferencia",
+        "pago recibido", "venta aprobada", "cobro recibido", "te consignaron"
+    )
+
+    /** Esto nunca es una transferencia (códigos de seguridad). */
+    private val NEVER = listOf("codigo de verificacion", "clave dinamica", "codigo de seguridad", "otp", "tu clave es")
+
     /** "Pago"/"pagaste" solo se ignora si no hay una señal clara de transferencia recibida. */
     private val SOFT_PAY = listOf("pagaste", "pago a", "pago de", "pago en", "pago por", "pago exitoso", "pago realizado", "realizaste un pago", "hiciste un pago")
 
@@ -39,15 +68,40 @@ object TxParser {
         "te transfirieron", "te consignaron", "te consigno", "has recibido", "ha recibido",
         "recibio una transferencia", "abono", "abonaron", "te pago", "te pagaron",
         "transferencia recibida", "dinero recibido", "plata recibida", " recibida de", " recibido de",
-        "recibida por", "recibido por"
+        "recibida por", "recibido por", " a tu cuenta", " a su cuenta", "hacia tu cuenta", "tienes una transferencia",
+        "tiene una transferencia", "transferencia entrante", "te estan enviando", "te van a llegar"
     )
 
     private val OUT_WORDS = listOf(
         "enviaste", "le enviaste", "transferiste", "envio exitoso", "transferencia exitosa",
         "realizaste una transferencia", "hiciste una transferencia", "transferencia enviada",
         "has enviado", "has transferido", "ha transferido", "transfirio desde su cuenta",
-        "envio de dinero"
+        "envio de dinero", "tu envio", "tu transferencia", "su transferencia", "envio a ", "transferencia a ",
+        "plata por cobrar", "enviada a"
     )
+
+    // ---------- Estado ----------
+
+    private val REJECTED = listOf(
+        "rechaz", "no fue exitos", "no exitos", "no se pudo", "no pudimos", "fallid", "fallo", "declinad",
+        "devuelt", "devolvimos", "devolucion", "revers", "reintegr", "anulad", "cancelad", "no se realizo",
+        "no se completo", "sin exito", "no aprobad", "denegad"
+    )
+    private val TO_COLLECT = listOf(
+        "por cobrar", "pendiente de cobro", "pendiente por cobrar", "por reclamar", "debe reclamar", "puede reclamar",
+        "sin reclamar", "pendiente de aceptacion", "aun no la ha recibido", "aun no la reclama", "tiene 30 dias", "tiene hasta"
+    )
+    private val IN_PROCESS = listOf(
+        "en proceso", "procesando", "en tramite", "pendiente", "se abonara", "sera abonad", "en validacion",
+        "programad", "en curso", "siguiente ciclo", "proximo dia habil", "hasta 24 horas", "en camino", "esta siendo procesad"
+    )
+
+    fun detectStatus(n: String): TxStatus = when {
+        containsAny(n, REJECTED) -> TxStatus.RECHAZADA
+        containsAny(n, TO_COLLECT) -> TxStatus.PENDIENTE_COBRO
+        containsAny(n, IN_PROCESS) -> TxStatus.EN_PROCESO
+        else -> TxStatus.APROBADA
+    }
 
     // ---------- Bancos ----------
 
@@ -159,6 +213,9 @@ object TxParser {
         }
         // "...de CARLOS RUIZ en tu cuenta" / "De: PEDRO SALAZAR"
         Regex("\\b(?:de|De|DE|desde|remitente|Remitente|REMITENTE)\\s*:?\\s+((?:$WORD\\s?){1,6})").findAll(text).forEach { m ->
+            // "Banco de Bogotá", "Banco de Occidente"… no son personas
+            val before = norm(text.substring(maxOf(0, m.range.first - 7), m.range.first))
+            if (before.trimEnd().endsWith("banco") || before.trimEnd().endsWith("caja")) return@forEach
             cleanName(m.groupValues[1])?.let { return it }
         }
         return null
@@ -190,9 +247,12 @@ object TxParser {
         if (text.isBlank()) return null
         val n = norm(text)
 
-        if (containsAny(n, HARD_EXCLUDE)) return null
+        if (containsAny(n, NEVER)) return null
+        val strongIn = containsAny(n, STRONG_IN)
+        // Compras, PSE, retiros, etc. se ignoran, salvo que sea plata que TE pagaron (QR, tarjeta, Nequi…)
+        if (!strongIn && containsAny(n, HARD_EXCLUDE)) return null
 
-        val isIn = containsAny(n, IN_WORDS)
+        val isIn = strongIn || containsAny(n, IN_WORDS)
         val isOut = !isIn && containsAny(n, OUT_WORDS)
         if (!isIn && !isOut) return null
         if (!isIn && containsAny(n, SOFT_PAY)) return null
@@ -209,6 +269,7 @@ object TxParser {
             bank = bank,
             last4 = findLast4(text),
             reference = findReference(text),
+            status = detectStatus(n),
         )
     }
 }

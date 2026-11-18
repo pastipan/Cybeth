@@ -17,6 +17,7 @@ import co.cuadra.app.data.Direction
 import co.cuadra.app.data.Prefs
 import co.cuadra.app.data.Tx
 import co.cuadra.app.ui.MainActivity
+import co.cuadra.app.ui.Wording
 import co.cuadra.app.ui.money
 import java.util.Locale
 
@@ -65,21 +66,8 @@ object Announcer {
 
     fun announce(ctx: Context, t: Tx) {
         val prefs = Prefs(ctx)
-        val who = t.counterparty
-        val bank = t.bank
-        val spoken = if (t.direction == Direction.IN) {
-            buildString {
-                append("Te llegaron ${t.amount} pesos")
-                if (who != null) append(" de $who")
-                if (bank != null) append(" por $bank")
-            }
-        } else {
-            buildString {
-                append("Enviaste ${t.amount} pesos")
-                if (who != null) append(" a $who")
-                if (bank != null) append(" desde $bank")
-            }
-        }
+        // Ej: "Cristian Rosero te envió 35000 pesos. Entró a Nequi."
+        val spoken = Wording.headline(t, spoken = true) + ". " + Wording.accountLine(t).substringBefore(" ****") + "."
         val wantVoice = if (t.direction == Direction.IN) prefs.voiceIn else prefs.voiceOut
         if (wantVoice) speak(ctx, spoken)
         if (prefs.notify) notify(ctx, t)
@@ -92,12 +80,8 @@ object Announcer {
             ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) return
         val isIn = t.direction == Direction.IN
-        val title = if (isIn) "↙ Te llegó ${money(t.amount)}" else "↗ Enviaste ${money(t.amount)}"
-        val body = listOfNotNull(
-            t.counterparty?.let { if (isIn) "De $it" else "A $it" },
-            t.bank,
-            t.last4?.let { "****$it" }
-        ).joinToString(" · ").ifBlank { "Transferencia detectada" }
+        val title = Wording.headline(t)
+        val body = Wording.accountLine(t) + " · " + Wording.statusLabel(t)
         val pi = PendingIntent.getActivity(
             ctx, 0, Intent(ctx, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
@@ -106,7 +90,7 @@ object Announcer {
             .setSmallIcon(R.drawable.ic_stat_cuadra)
             .setContentTitle(title)
             .setContentText(body)
-            .setColor(if (isIn) 0xFF0FB5A3.toInt() else 0xFFFF8F8F.toInt())
+            .setColor(if (t.status == co.cuadra.app.data.TxStatus.RECHAZADA) 0xFFE25555.toInt() else if (isIn) 0xFF0FB5A3.toInt() else 0xFFFF8F8F.toInt())
             .setAutoCancel(true)
             .setContentIntent(pi)
             .setPriority(NotificationCompat.PRIORITY_HIGH)

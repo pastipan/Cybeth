@@ -4,6 +4,7 @@ import co.cuadra.app.data.Dedup
 import co.cuadra.app.data.Direction
 import co.cuadra.app.data.Tx
 import co.cuadra.app.data.TxParser
+import co.cuadra.app.data.TxStatus
 import co.cuadra.app.data.filterTxs
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -122,4 +123,72 @@ class TxLogicTest {
         assertEquals(listOf(1L), filterTxs(l, Direction.IN, "Nequi").map { it.id })
         assertEquals(0, filterTxs(l, Direction.OUT, "Bancolombia").size)
     }
+
+    // ---------------- Estados (como Fortu) ----------------
+    private fun st(text: String, dir: Direction, amount: Long, status: TxStatus, who: String? = null, bank: String = "Nequi") {
+        val p = TxParser.parse(text, bank)
+        assertTrue("Debió detectar: $text", p != null)
+        assertEquals("Sentido en: $text", dir, p!!.direction)
+        assertEquals("Monto en: $text", amount, p.amount)
+        assertEquals("Estado en: $text", status, p.status)
+        if (who != null) assertEquals("Nombre en: $text", who, p.counterparty)
+    }
+
+    @Test fun estadoAprobada() = st("Laura Méndez te envió \$42.500", Direction.IN, 42500, TxStatus.APROBADA, "Laura Méndez")
+    @Test fun estadoRechazadaEntrante() = st(
+        "Bancolombia: La transferencia de \$120.000 de ANDREA GOMEZ a tu cuenta ****4821 fue RECHAZADA por el banco de origen.",
+        Direction.IN, 120000, TxStatus.RECHAZADA, "Andrea Gomez", "Bancolombia")
+    @Test fun estadoEnProcesoAch() = st(
+        "Banco de Bogotá: Tienes una transferencia ACH por \$250.000 de DISTRIBUIDORA EL SOL SAS en proceso. Se abonará a tu cuenta ****0356.",
+        Direction.IN, 250000, TxStatus.EN_PROCESO, "Distribuidora El Sol SAS", "Banco de Bogotá")
+    @Test fun estadoPorCobrarNequi() = st(
+        "Le enviaste \$20.000 a 3001234567. Es plata por cobrar: la persona tiene 30 días para reclamarla.",
+        Direction.OUT, 20000, TxStatus.PENDIENTE_COBRO)
+    @Test fun estadoEnvioRechazado() = st(
+        "Tu envío de \$50.000 a MARIA LOPEZ fue rechazado. La plata volvió a tu Nequi.",
+        Direction.OUT, 50000, TxStatus.RECHAZADA, "Maria Lopez")
+    @Test fun estadoEnvioOtroBancoEnProceso() = st(
+        "Enviaste \$300.000 a CARLOS RUIZ, cuenta Davivienda. Tu transferencia está en proceso y puede tardar hasta 24 horas hábiles.",
+        Direction.OUT, 300000, TxStatus.EN_PROCESO, "Carlos Ruiz")
+
+    private fun t2(id: Long, amount: Long, dir: Direction, who: String?, status: TxStatus, time: Long, ref: String? = null, bank: String = "Nequi") =
+        Tx(id, amount, dir, who, bank, null, ref, "Correo", "raw$id", time, status)
+
+    @Test fun enProcesoPasaAAprobada() {
+        val old = t2(1, 250000, Direction.IN, "Distribuidora El Sol SAS", TxStatus.EN_PROCESO, 1_000_000, bank = "Banco de Bogotá")
+        val p = TxParser.parse("Banco de Bogotá: Recibiste una transferencia de \$250.000 de DISTRIBUIDORA EL SOL SAS en tu cuenta ****0356", "Banco de Bogotá")!!
+        assertEquals(TxStatus.APROBADA, p.status)
+        assertFalse(Dedup.isDuplicate(listOf(old), p, "Correo", "x", 5_000_000))
+        assertEquals(1L, Dedup.statusUpdateFor(listOf(old), p, 5_000_000)?.id)
+    }
+    @Test fun envioAprobadoLuegoDevuelto() {
+        val old = t2(7, 50000, Direction.OUT, "Maria Lopez", TxStatus.APROBADA, 1_000_000)
+        val p = TxParser.parse("Tu envío de \$50.000 a MARIA LOPEZ fue rechazado.", "Nequi")!!
+        assertEquals(7L, Dedup.statusUpdateFor(listOf(old), p, 2_000_000)?.id)
+    }
+    @Test fun rechazadaNoVuelveAAprobada() {
+        val old = t2(3, 50000, Direction.OUT, "Maria Lopez", TxStatus.RECHAZADA, 1_000_000)
+        val p = TxParser.parse("Le enviaste \$50.000 a MARIA LOPEZ", "Nequi")!!
+        assertNull("No debe cambiar una rechazada a aprobada", Dedup.statusUpdateFor(listOf(old), p, 2_000_000))
+    }
+    @Test fun otraPersonaMismoMontoNoEsCambioDeEstado() {
+        val old = t2(4, 250000, Direction.IN, "Ana Ruiz", TxStatus.EN_PROCESO, 1_000_000)
+        val p = TxParser.parse("Recibiste \$250.000 de LUIS MORA", "Nequi")!!
+        assertNull(Dedup.statusUpdateFor(listOf(old), p, 2_000_000))
+    }
+    @Test fun filtroPorEstado() {
+        val l = listOf(
+            t2(1, 1, Direction.IN, null, TxStatus.APROBADA, 0),
+            t2(2, 2, Direction.IN, null, TxStatus.RECHAZADA, 0),
+            t2(3, 3, Direction.OUT, null, TxStatus.EN_PROCESO, 0),
+        )
+        assertEquals(listOf(2L), filterTxs(l, null, null, TxStatus.RECHAZADA).map { it.id })
+        assertEquals(listOf(1L), filterTxs(l, Direction.IN, null, TxStatus.APROBADA).map { it.id })
+    }
+
+    // ---------------- Cobros que te hacen por QR o tarjeta (sí cuentan) ----------------
+    @Test fun cobroQrNequi() = st("¡Te pagaron! Cristian Rosero te pagó \$35.000 con tu QR Nequi", Direction.IN, 35000, TxStatus.APROBADA, "Cristian Rosero")
+    @Test fun cobroConTarjeta() = st("Nequi Negocios: Recibiste un pago con tarjeta de crédito por \$80.000", Direction.IN, 80000, TxStatus.APROBADA)
+    @Test fun cobroQrBancolombia() = st("Bancolombia: Recibiste un pago por QR de \$12.500 de JUAN DIAZ en tu cuenta *4821", Direction.IN, 12500, TxStatus.APROBADA, "Juan Diaz", "Bancolombia")
+    @Test fun compraConTarjetaAsociadaACuentaSigueIgnorada() = ignored("Compra por \$67.800 en EXITO con tu tarjeta débito asociada a tu cuenta *4821")
 }

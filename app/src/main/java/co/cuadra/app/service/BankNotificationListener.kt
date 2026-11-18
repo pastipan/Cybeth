@@ -6,6 +6,12 @@ import android.service.notification.StatusBarNotification
 import co.cuadra.app.data.Prefs
 import co.cuadra.app.data.Repo
 import co.cuadra.app.data.TxParser
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -37,6 +43,18 @@ class BankNotificationListener : NotificationListenerService() {
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
         val label = appLabel(pkg)
+
+        // Si llega un correo de un banco a Gmail, revisamos el correo YA (sin esperar los 15 minutos)
+        if (pkg == "com.google.android.gm" || pkg.contains("outlook")) {
+            val ex0 = n.extras
+            val peek = listOf(
+                ex0.getCharSequence(Notification.EXTRA_TITLE), ex0.getCharSequence(Notification.EXTRA_TEXT),
+                ex0.getCharSequence(Notification.EXTRA_BIG_TEXT), ex0.getCharSequence(Notification.EXTRA_SUB_TEXT)
+            ).joinToString(" ") { it?.toString().orEmpty() }
+            if (TxParser.detectBank(peek) != null && Prefs(this).emailLinked) checkMailSoon()
+            return
+        }
+
         val isSms = isSmsApp(pkg)
         val bankFromApp = TxParser.detectBank(label) ?: TxParser.detectBank(pkg)
         if (bankFromApp == null && !isSms) return
@@ -65,6 +83,24 @@ class BankNotificationListener : NotificationListenerService() {
             time = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
         ) ?: return
         Announcer.announce(this, saved)
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var lastMailCheck = 0L
+
+    private fun checkMailSoon() {
+        val now = System.currentTimeMillis()
+        if (now - lastMailCheck < 8_000) return
+        lastMailCheck = now
+        scope.launch {
+            delay(2_000) // darle un momento a Gmail para que el correo ya esté en el servidor
+            MailChecker.check(applicationContext)
+        }
+    }
+
+    override fun onDestroy() {
+        scope.cancel()
+        super.onDestroy()
     }
 
     private fun appLabel(pkg: String): String = try {

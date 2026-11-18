@@ -13,9 +13,12 @@ import co.cuadra.app.data.Direction
 import co.cuadra.app.data.Prefs
 import co.cuadra.app.data.Repo
 import co.cuadra.app.data.Tx
+import co.cuadra.app.data.TxStatus
+import co.cuadra.app.ui.Wording
 import co.cuadra.app.ui.money
 import co.cuadra.app.ui.whenText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Date
 import java.util.Properties
@@ -97,11 +100,13 @@ object ForwardMail {
         Transport.send(msg)
     }
 
-    fun subjectFor(t: Tx): String {
-        val inc = t.direction == Direction.IN
-        val who = t.counterparty?.let { if (inc) " de $it" else " a $it" } ?: ""
-        val bank = t.bank?.let { " · $it" } ?: ""
-        return (if (inc) "✅ Llegó ${money(t.amount)}" else "↗ Se envió ${money(t.amount)}") + who + bank
+    fun subjectFor(t: Tx): String = Wording.emailSubject(t)
+
+    private fun statusColor(t: Tx) = when (t.status) {
+        TxStatus.APROBADA -> "#0FB5A3"
+        TxStatus.EN_PROCESO -> "#E59A12"
+        TxStatus.PENDIENTE_COBRO -> "#3B7BE0"
+        TxStatus.RECHAZADA -> "#E25555"
     }
 
     private fun row(k: String, v: String) =
@@ -111,9 +116,11 @@ object ForwardMail {
 
     fun htmlFor(t: Tx): String {
         val inc = t.direction == Direction.IN
-        val color = if (inc) "#0FB5A3" else "#E25555"
-        val title = if (inc) "Te llegó una transferencia" else "Se envió una transferencia"
+        val color = if (t.status == TxStatus.RECHAZADA) "#9aa3b5" else if (inc) "#0FB5A3" else "#E25555"
+        val title = Wording.headline(t)
+        val badge = "<span style=\"display:inline-block;padding:4px 10px;border-radius:99px;background:${statusColor(t)};color:#fff;font-weight:700;font-size:13px\">${esc(Wording.statusLabel(t))}</span>"
         val rows = buildString {
+            append(row("Estado", Wording.statusName(t.status)))
             append(row(if (inc) "De" else "Para", t.counterparty ?: "No identificado"))
             append(row(if (inc) "Llegó a" else "Salió de", (t.bank ?: "Banco no identificado") + (t.last4?.let { " ****$it" } ?: "")))
             t.reference?.let { append(row("Referencia", it)) }
@@ -125,8 +132,10 @@ object ForwardMail {
   <div style="max-width:460px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e3e7ee">
     <div style="background:#0FB5A3;padding:14px 18px;color:#ffffff;font-weight:800;font-size:20px">cybeth</div>
     <div style="padding:20px 18px">
-      <div style="color:#6b7690;font-size:14px">$title</div>
-      <div style="font-size:34px;font-weight:800;color:$color;margin:4px 0 14px">${if (inc) "+" else "-"}${money(t.amount)}</div>
+      <div style="color:#14213D;font-size:16px;font-weight:700">${esc(title)}</div>
+      <div style="font-size:34px;font-weight:800;color:$color;margin:4px 0 6px${if (t.status == TxStatus.RECHAZADA) ";text-decoration:line-through" else ""}">${if (inc) "+" else "-"}${money(t.amount)}</div>
+      <div style="margin:0 0 6px">$badge</div>
+      <div style="color:#6b7690;font-size:14px;margin-bottom:12px">${esc(Wording.accountLine(t))}</div>
       <table style="width:100%;border-collapse:collapse;font-size:14px">$rows</table>
       <div style="margin-top:16px;padding:10px 12px;background:#f6f8fa;border-radius:10px;color:#6b7690;font-size:12px;white-space:pre-wrap">${esc(t.raw.take(500))}</div>
     </div>
@@ -138,8 +147,10 @@ object ForwardMail {
     fun plainFor(t: Tx): String {
         val inc = t.direction == Direction.IN
         return buildString {
-            appendLine(if (inc) "Te llegó una transferencia" else "Se envió una transferencia")
+            appendLine(Wording.headline(t))
             appendLine((if (inc) "+" else "-") + money(t.amount))
+            appendLine("Estado: " + Wording.statusName(t.status))
+            appendLine(Wording.accountLine(t))
             appendLine((if (inc) "De: " else "Para: ") + (t.counterparty ?: "No identificado"))
             appendLine((if (inc) "Llegó a: " else "Salió de: ") + (t.bank ?: "Banco no identificado") + (t.last4?.let { " ****$it" } ?: ""))
             t.reference?.let { appendLine("Referencia: $it") }
@@ -192,13 +203,27 @@ object ForwardMail {
         return sendFor(ctx, fake)
     }
 
-    /** Pone en cola el envío (se reintenta solo si no hay internet en ese momento). */
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * Manda el correo YA (en segundos). Si falla (por ejemplo sin internet), lo deja en cola
+     * y Android lo reintenta solo cuando vuelva la conexión.
+     */
     fun enqueue(ctx: Context, t: Tx) {
         val prefs = Prefs(ctx)
         val want = if (t.direction == Direction.IN) prefs.forwardIn else prefs.forwardOut
         if (!want || prefs.forwardList.isEmpty() || !prefs.emailLinked) return
+        val app = ctx.applicationContext
+        scope.launch {
+            val r = sendFor(app, t)
+            Prefs(app).lastForwardResult = r.message
+            if (!r.ok) enqueueRetry(app, t)
+        }
+    }
+
+    private fun enqueueRetry(ctx: Context, t: Tx) {
         val req = OneTimeWorkRequestBuilder<ForwardWorker>()
-            .setInputData(workDataOf("txId" to t.id))
+            .setInputData(workDataOf("txId" to t.id, "upd" to t.updated))
             .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
             .build()
@@ -210,7 +235,7 @@ class ForwardWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
     override suspend fun doWork(): Result {
         Repo.init(applicationContext)
         val id = inputData.getLong("txId", -1)
-        val t = Repo.txs.value.firstOrNull { it.id == id } ?: return Result.success()
+        val t = Repo.txs.value.firstOrNull { it.id == id }?.copy(updated = inputData.getBoolean("upd", false)) ?: return Result.success()
         val r = ForwardMail.sendFor(applicationContext, t)
         Prefs(applicationContext).lastForwardResult = r.message
         return when {

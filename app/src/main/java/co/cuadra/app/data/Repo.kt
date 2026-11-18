@@ -22,7 +22,7 @@ object Repo {
     @Synchronized
     private fun reload() {
         val list = mutableListOf<Tx>()
-        db.readableDatabase.rawQuery("SELECT id,amount,dir,who,bank,last4,ref,source,raw,time FROM tx ORDER BY time DESC LIMIT 2000", null).use { c ->
+        db.readableDatabase.rawQuery("SELECT id,amount,dir,who,bank,last4,ref,source,raw,time,status FROM tx ORDER BY time DESC LIMIT 2000", null).use { c ->
             while (c.moveToNext()) {
                 list += Tx(
                     id = c.getLong(0),
@@ -35,6 +35,7 @@ object Repo {
                     source = c.getString(7) ?: "",
                     raw = c.getString(8) ?: "",
                     time = c.getLong(9),
+                    status = runCatching { TxStatus.valueOf(c.getString(10) ?: "APROBADA") }.getOrDefault(TxStatus.APROBADA),
                 )
             }
         }
@@ -51,6 +52,19 @@ object Repo {
     @Synchronized
     fun insertIfNew(p: ParsedTx, source: String, raw: String, time: Long = System.currentTimeMillis()): Tx? {
         if (Dedup.isDuplicate(_txs.value, p, source, raw.take(2000), time)) return null
+        // ¿Es un cambio de estado de una que ya teníamos? (ej. "en proceso" → "aprobada")
+        Dedup.statusUpdateFor(_txs.value, p, time)?.let { old ->
+            val cv = ContentValues().apply {
+                put("status", p.status.name)
+                if (old.counterparty == null && p.counterparty != null) put("who", p.counterparty)
+                if (old.reference == null && p.reference != null) put("ref", p.reference)
+                if (old.last4 == null && p.last4 != null) put("last4", p.last4)
+                put("raw", (old.raw + "\n— Actualización (" + source + "):\n" + raw).takeLast(4000))
+            }
+            db.writableDatabase.update("tx", cv, "id=?", arrayOf(old.id.toString()))
+            reload()
+            return _txs.value.firstOrNull { it.id == old.id }?.copy(updated = true)
+        }
         val cv = ContentValues().apply {
             put("amount", p.amount)
             put("dir", p.direction.name)
@@ -61,6 +75,7 @@ object Repo {
             put("source", source)
             put("raw", raw.take(2000))
             put("time", time)
+            put("status", p.status.name)
         }
         val id = db.writableDatabase.insert("tx", null, cv)
         reload()
@@ -86,18 +101,21 @@ object Repo {
         )
     }
 
-    private class Helper(ctx: Context) : SQLiteOpenHelper(ctx, "cuadra.db", null, 1) {
+    private class Helper(ctx: Context) : SQLiteOpenHelper(ctx, "cuadra.db", null, 2) {
         override fun onCreate(d: SQLiteDatabase) {
             d.execSQL(
                 """CREATE TABLE tx(
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     amount INTEGER NOT NULL, dir TEXT NOT NULL, who TEXT, bank TEXT,
-                    last4 TEXT, ref TEXT, source TEXT, raw TEXT, time INTEGER NOT NULL)"""
+                    last4 TEXT, ref TEXT, source TEXT, raw TEXT, time INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'APROBADA')"""
             )
             d.execSQL("CREATE INDEX tx_time ON tx(time)")
             d.execSQL("CREATE TABLE seen_email(mid TEXT PRIMARY KEY)")
         }
 
-        override fun onUpgrade(d: SQLiteDatabase, oldV: Int, newV: Int) {}
+        override fun onUpgrade(d: SQLiteDatabase, oldV: Int, newV: Int) {
+            if (oldV < 2) d.execSQL("ALTER TABLE tx ADD COLUMN status TEXT NOT NULL DEFAULT 'APROBADA'")
+        }
     }
 }

@@ -66,6 +66,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,6 +75,7 @@ import androidx.core.content.ContextCompat
 import co.cuadra.app.data.Direction
 import co.cuadra.app.data.Prefs
 import co.cuadra.app.data.TxParser
+import co.cuadra.app.data.TxStatus
 import co.cuadra.app.data.filterTxs
 import co.cuadra.app.data.Tx
 import co.cuadra.app.service.Announcer
@@ -137,19 +139,81 @@ fun TxRow(t: Tx, onClick: () -> Unit) {
     ) {
         BankAvatar(t.bank)
         Spacer(Modifier.width(12.dp))
+        val rejected = t.status == TxStatus.RECHAZADA
         Column(Modifier.weight(1f)) {
             Text(
                 (if (out) "↗ " else "↙ ") + (t.counterparty ?: if (out) "Transferencia enviada" else "Transferencia recibida"),
                 color = TextC, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
             )
             Text(
-                listOfNotNull(t.bank, t.last4?.let { "****$it" }, hour(t.time)).joinToString(" · "),
-                color = Muted, fontSize = 12.5.sp, maxLines = 1
+                Wording.accountLine(t) + " · " + hour(t.time),
+                color = Muted, fontSize = 12.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
             )
         }
+        Spacer(Modifier.width(6.dp))
         Column(horizontalAlignment = Alignment.End) {
-            Text((if (out) "-" else "+") + money(t.amount), color = if (out) OutRed else Accent, fontWeight = FontWeight.Bold, fontSize = 15.sp)
-            Text(t.source, color = Muted, fontSize = 11.sp)
+            Text(
+                (if (out) "-" else "+") + money(t.amount),
+                color = if (rejected) Muted else if (out) OutRed else Accent,
+                fontWeight = FontWeight.Bold, fontSize = 15.sp,
+                textDecoration = if (rejected) TextDecoration.LineThrough else null
+            )
+            Spacer(Modifier.height(3.dp))
+            StatusPill(t)
+        }
+    }
+}
+
+fun statusColor(s: TxStatus): Color = when (s) {
+    TxStatus.APROBADA -> Accent
+    TxStatus.EN_PROCESO -> Warn
+    TxStatus.PENDIENTE_COBRO -> InfoBlue
+    TxStatus.RECHAZADA -> OutRed
+}
+
+/** Etiqueta de color con el estado: "Entró ✓", "En proceso", "Pendiente por cobrar", "Rechazada ✗". */
+@Composable
+fun StatusPill(t: Tx, big: Boolean = false) {
+    val c = statusColor(t.status)
+    Text(
+        Wording.statusLabel(t),
+        color = c, fontWeight = FontWeight.Bold, fontSize = if (big) 14.sp else 11.sp,
+        modifier = Modifier.clip(RoundedCornerShape(99.dp)).background(c.copy(alpha = 0.15f))
+            .padding(horizontal = if (big) 12.dp else 8.dp, vertical = if (big) 5.dp else 2.dp)
+    )
+}
+
+/** Lo último que pasó, en grande (como Fortu): quién, cuánto, a qué cuenta y si entró o no. */
+@Composable
+fun LatestCard(t: Tx, onClick: () -> Unit) {
+    val rejected = t.status == TxStatus.RECHAZADA
+    Column(
+        Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(18.dp))
+            .background(CardBg).border(2.dp, statusColor(t.status).copy(alpha = 0.6f), RoundedCornerShape(18.dp))
+            .clickable(onClick = onClick).padding(16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Último movimiento", color = Muted, fontSize = 12.5.sp, modifier = Modifier.weight(1f))
+            Text(ago(t.time), color = Muted, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            BankAvatar(t.bank)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(Wording.headline(t), color = TextC, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(Wording.accountLine(t), color = Muted, fontSize = 13.sp)
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                (if (t.direction == Direction.OUT) "-" else "+") + money(t.amount),
+                color = if (rejected) Muted else if (t.direction == Direction.OUT) OutRed else Accent,
+                fontWeight = FontWeight.ExtraBold, fontSize = 26.sp, modifier = Modifier.weight(1f),
+                textDecoration = if (rejected) TextDecoration.LineThrough else null
+            )
+            StatusPill(t, big = true)
         }
     }
 }
@@ -165,14 +229,17 @@ fun HomeScreen(
     onSettings: () -> Unit,
     onBankClick: (String?) -> Unit,
     onDirClick: (Direction) -> Unit,
+    onStatusClick: (TxStatus) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ctx = LocalContext.current
     val listenerOn = remember(resumeTick) { listenerEnabled(ctx) }
     val emailOn = remember(resumeTick) { Prefs(ctx).emailLinked }
     val today = txs.filter { isToday(it.time) }
-    val inSum = today.filter { it.direction == Direction.IN }.sumOf { it.amount }
-    val outSum = today.filter { it.direction == Direction.OUT }.sumOf { it.amount }
+    // Solo cuenta la plata que de verdad entró o salió (aprobada)
+    val okToday = today.filter { it.status == TxStatus.APROBADA }
+    val inSum = okToday.filter { it.direction == Direction.IN }.sumOf { it.amount }
+    val outSum = okToday.filter { it.direction == Direction.OUT }.sumOf { it.amount }
     val net = inSum - outSum
 
     LazyColumn(modifier.fillMaxSize().background(Bg).padding(horizontal = 16.dp)) {
@@ -228,6 +295,29 @@ fun HomeScreen(
                 }
             }
         }
+        txs.firstOrNull()?.let { last -> item { LatestCard(last) { onOpen(last) } } }
+        item {
+            SectionTitle("Estado de hoy")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(
+                    TxStatus.APROBADA to "Entraron",
+                    TxStatus.EN_PROCESO to "En proceso",
+                    TxStatus.PENDIENTE_COBRO to "Por cobrar",
+                    TxStatus.RECHAZADA to "Rechazadas",
+                ).forEach { (st, label) ->
+                    val n = if (st == TxStatus.APROBADA) today.count { it.status == st && it.direction == Direction.IN } else today.count { it.status == st }
+                    val c = statusColor(st)
+                    Column(
+                        Modifier.weight(1f).clip(RoundedCornerShape(14.dp)).background(c.copy(alpha = 0.12f))
+                            .clickable { onStatusClick(st) }.padding(vertical = 10.dp, horizontal = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("$n", color = c, fontWeight = FontWeight.ExtraBold, fontSize = 20.sp)
+                        Text(label, color = TextC, fontSize = 11.sp, maxLines = 1)
+                    }
+                }
+            }
+        }
         // Todos los bancos donde ha habido movimientos; los montos son los de hoy
         val byBank = txs.groupBy { it.bank ?: "Otro" }
         if (byBank.isNotEmpty()) {
@@ -247,8 +337,8 @@ fun HomeScreen(
                                 Text("${list.size} movimiento${if (list.size == 1) "" else "s"} · ver ›", color = Muted, fontSize = 11.5.sp)
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text("+" + money(list.filter { it.direction == Direction.IN && isToday(it.time) }.sumOf { it.amount }), color = Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                Text("-" + money(list.filter { it.direction == Direction.OUT && isToday(it.time) }.sumOf { it.amount }), color = OutRed, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("+" + money(list.filter { it.direction == Direction.IN && isToday(it.time) && it.status == TxStatus.APROBADA }.sumOf { it.amount }), color = Accent, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("-" + money(list.filter { it.direction == Direction.OUT && isToday(it.time) && it.status == TxStatus.APROBADA }.sumOf { it.amount }), color = OutRed, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
@@ -314,10 +404,12 @@ fun TxScreen(
     onDir: (Direction?) -> Unit,
     bank: String?,
     onBank: (String?) -> Unit,
+    status: TxStatus?,
+    onStatus: (TxStatus?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val banks = txs.mapNotNull { it.bank }.distinct().sorted()
-    val list = filterTxs(txs, dir, bank)
+    val list = filterTxs(txs, dir, bank, status)
     val chipColors = FilterChipDefaults.filterChipColors(
         containerColor = Card2, labelColor = Muted,
         selectedContainerColor = TextC, selectedLabelColor = Bg
@@ -332,6 +424,14 @@ fun TxScreen(
                 }
             }
         }
+        item {
+            Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                FilterChip(selected = status == null, onClick = { onStatus(null) }, label = { Text("Todos los estados") }, colors = chipColors)
+                TxStatus.values().forEach { st ->
+                    FilterChip(selected = status == st, onClick = { onStatus(st) }, label = { Text(Wording.statusName(st)) }, colors = chipColors)
+                }
+            }
+        }
         if (banks.isNotEmpty() || bank != null) item {
             Row(Modifier.padding(top = 6.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 FilterChip(selected = bank == null, onClick = { onBank(null) }, label = { Text("Todos los bancos") }, colors = chipColors)
@@ -341,8 +441,8 @@ fun TxScreen(
             }
         }
         if (list.isNotEmpty()) item {
-            val i = list.filter { it.direction == Direction.IN }.sumOf { it.amount }
-            val o = list.filter { it.direction == Direction.OUT }.sumOf { it.amount }
+            val i = list.filter { it.direction == Direction.IN && it.status == TxStatus.APROBADA }.sumOf { it.amount }
+            val o = list.filter { it.direction == Direction.OUT && it.status == TxStatus.APROBADA }.sumOf { it.amount }
             Text("Entradas +${money(i)}   ·   Enviadas -${money(o)}", color = Muted, fontSize = 12.5.sp, modifier = Modifier.padding(vertical = 8.dp))
         }
         if (list.isEmpty()) item {
@@ -372,6 +472,12 @@ fun TxDetailDialog(t: Tx, onClose: () -> Unit, onDelete: () -> Unit) {
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(Wording.headline(t), color = TextC, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Spacer(Modifier.height(6.dp))
+                StatusPill(t, big = true)
+                Spacer(Modifier.height(10.dp))
+                Detail("Estado", Wording.statusName(t.status))
+                Detail("Cuenta", Wording.accountLine(t))
                 Detail(if (out) "Para" else "De", t.counterparty ?: "No identificado")
                 Detail(if (out) "Salió de" else "Llegó a", t.bank ?: "No identificado")
                 t.last4?.let { Detail("Cuenta", "****$it") }
@@ -655,7 +761,7 @@ private fun TestParserSection() {
         OutlinedButton(onClick = {
             val p = TxParser.parse(text)
             out = if (p == null) "Ignorado: no es una transferencia (o es compra/pago/PSE/retiro)."
-            else (if (p.direction == Direction.IN) "↙ ENTRADA " else "↗ ENVIADA ") + money(p.amount) +
+            else (if (p.direction == Direction.IN) "↙ ENTRADA " else "↗ ENVIADA ") + money(p.amount) + " · " + Wording.statusName(p.status) +
                 "\nPersona: ${p.counterparty ?: "—"}\nBanco: ${p.bank ?: "—"}\nCuenta: ${p.last4?.let { "****$it" } ?: "—"}\nReferencia: ${p.reference ?: "—"}"
         }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Probar") }
         out?.let {

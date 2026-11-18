@@ -13,11 +13,16 @@ data class Tx(
     val source: String,
     val raw: String,
     val time: Long,
+    val status: TxStatus = TxStatus.APROBADA,
+    /** true cuando este movimiento ya existía y solo le cambió el estado (no se guarda en la BD). */
+    val updated: Boolean = false,
 )
 
-/** Filtro de la pantalla Movimientos. dir: null = todo. bank: null = todos los bancos. */
-fun filterTxs(list: List<Tx>, dir: Direction?, bank: String?): List<Tx> =
-    list.filter { (dir == null || it.direction == dir) && (bank == null || it.bank == bank) }
+/** Filtro de la pantalla Movimientos. null = sin filtrar. */
+fun filterTxs(list: List<Tx>, dir: Direction?, bank: String?, status: TxStatus? = null): List<Tx> =
+    list.filter {
+        (dir == null || it.direction == dir) && (bank == null || it.bank == bank) && (status == null || it.status == status)
+    }
 
 object Dedup {
     private const val WINDOW = 15 * 60 * 1000L
@@ -40,6 +45,8 @@ object Dedup {
     fun isDuplicate(existing: List<Tx>, p: ParsedTx, source: String, raw: String, time: Long): Boolean =
         existing.any { t ->
             if (t.amount != p.amount || t.direction != p.direction) return@any false
+            // Un cambio de estado (ej. de "en proceso" a "aprobada") no es repetido: se maneja con statusUpdateFor
+            if (t.status != p.status) return@any false
             if (p.reference != null && t.reference != null) return@any t.reference.equals(p.reference, ignoreCase = true)
             val close = kotlin.math.abs(t.time - time) < WINDOW
             if (!close) return@any false
@@ -48,4 +55,26 @@ object Dedup {
                 (t.bank == null || p.bank == null || t.bank == p.bank) &&
                 sameName(t.counterparty, p.counterparty)
         }
+
+    /**
+     * Si este mensaje es un CAMBIO DE ESTADO de una transferencia ya guardada, la devuelve.
+     * Ej: primero "transferencia en proceso por $250.000 de X" y horas después
+     * "se abonó la transferencia de $250.000 de X" → la misma pasa a Aprobada.
+     * O "tu envío a MARIA fue devuelto" → la enviada pasa a Rechazada.
+     */
+    fun statusUpdateFor(existing: List<Tx>, p: ParsedTx, time: Long): Tx? =
+        existing
+            .filter { t ->
+                t.amount == p.amount && t.direction == p.direction && t.status != p.status &&
+                    p.status.rank >= t.status.rank &&
+                    time - t.time in -WINDOW..(4 * 24 * 60 * 60 * 1000L) &&
+                    (t.bank == null || p.bank == null || t.bank == p.bank) &&
+                    when {
+                        p.reference != null && t.reference != null -> t.reference.equals(p.reference, ignoreCase = true)
+                        p.counterparty != null && t.counterparty != null -> sameName(t.counterparty, p.counterparty)
+                        // Sin nombre ni referencia: solo si es muy cercano en tiempo (2 horas)
+                        else -> kotlin.math.abs(time - t.time) < 2 * 60 * 60 * 1000L
+                    }
+            }
+            .maxByOrNull { it.time }
 }

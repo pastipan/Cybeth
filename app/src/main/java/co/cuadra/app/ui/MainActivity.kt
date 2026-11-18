@@ -30,6 +30,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import co.cuadra.app.data.Direction
 import co.cuadra.app.data.Repo
 import co.cuadra.app.data.Tx
+import co.cuadra.app.data.TxStatus
 
 class MainActivity : FragmentActivity() {
     /** Sube cada vez que el usuario vuelve a la app (para refrescar permisos). */
@@ -99,6 +100,8 @@ fun AppRoot(resumeTick: Int, onLock: () -> Unit, requestBiometric: (onOk: () -> 
     // Filtros de Movimientos (se comparten con Inicio para que al tocar un banco se abran sus movimientos)
     var dirName by rememberSaveable { mutableStateOf<String?>(null) }
     var bank by rememberSaveable { mutableStateOf<String?>(null) }
+    var statusName by rememberSaveable { mutableStateOf<String?>(null) }
+    val status = statusName?.let { TxStatus.valueOf(it) }
     val dir = dirName?.let { Direction.valueOf(it) }
     val txs by Repo.txs.collectAsStateWithLifecycle()
 
@@ -122,13 +125,14 @@ fun AppRoot(resumeTick: Int, onLock: () -> Unit, requestBiometric: (onOk: () -> 
         when (tab) {
             0 -> HomeScreen(
                 txs, resumeTick, onOpen,
-                onSeeAll = { dirName = null; bank = null; tab = 1 },
+                onSeeAll = { dirName = null; bank = null; statusName = null; tab = 1 },
                 onSettings = { tab = 2 },
-                onBankClick = { b -> bank = b; dirName = null; tab = 1 },
-                onDirClick = { d -> dirName = d.name; bank = null; tab = 1 },
+                onBankClick = { b -> bank = b; dirName = null; statusName = null; tab = 1 },
+                onDirClick = { d -> dirName = d.name; bank = null; statusName = TxStatus.APROBADA.name; tab = 1 },
+                onStatusClick = { st -> statusName = st.name; bank = null; dirName = if (st == TxStatus.APROBADA) Direction.IN.name else null; tab = 1 },
                 modifier = m
             )
-            1 -> TxScreen(txs, onOpen, dir, { dirName = it?.name }, bank, { bank = it }, modifier = m)
+            1 -> TxScreen(txs, onOpen, dir, { dirName = it?.name }, bank, { bank = it }, status, { statusName = it?.name }, modifier = m)
             else -> SettingsScreen(resumeTick, onLock, requestBiometric, modifier = m)
         }
     }
