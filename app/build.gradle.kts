@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -18,7 +20,7 @@ android {
 
     // Llave fija de Cybeth: así cada versión nueva se instala encima de la anterior sin borrar nada.
     val ksFile = file("keystore.properties")
-    val ks = java.util.Properties().apply { if (ksFile.exists()) ksFile.inputStream().use { load(it) } }
+    val ks = Properties().apply { if (ksFile.exists()) ksFile.inputStream().use { load(it) } }
     signingConfigs {
         create("cybeth") {
             storeFile = file(ks.getProperty("storeFile", "cybeth.jks"))
