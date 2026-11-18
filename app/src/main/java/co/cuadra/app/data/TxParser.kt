@@ -161,14 +161,42 @@ object TxParser {
 
     /** Toma el monto de la transferencia, saltando el "saldo disponible" o "cupo" que algunos bancos ponen. */
     fun parseAmount(text: String): Long? {
-        val all = AMOUNT_RX.findAll(text).toList().ifEmpty { AMOUNT_PESOS_RX.findAll(text).toList() }
-        val m = all.firstOrNull { mm ->
-            val before = norm(text.substring(maxOf(0, mm.range.first - 28), mm.range.first))
-            !(before.contains("saldo") || before.contains("disponible") || before.contains("cupo") || before.contains("costo") || before.contains("comision"))
-        } ?: return null
+        val m = mainAmount(text) ?: return null
         val digits = m.groupValues[1].replace(".", "").replace(",", "")
         val v = digits.toLongOrNull() ?: return null
         return if (v > 0) v else null
+    }
+
+    private fun mainAmount(text: String): MatchResult? {
+        val all = AMOUNT_RX.findAll(text).toList().ifEmpty { AMOUNT_PESOS_RX.findAll(text).toList() }
+        return all.firstOrNull { mm ->
+            val before = norm(text.substring(maxOf(0, mm.range.first - 28), mm.range.first))
+            !(before.contains("saldo") || before.contains("disponible") || before.contains("cupo") || before.contains("costo") || before.contains("comision"))
+        }
+    }
+
+    /**
+     * Los correos de los bancos traen al final "consejos de seguridad" y publicidad que pueden
+     * decir "compras", "pendiente", "PSE"… Se corta ese pie y se mira solo el mensaje principal
+     * (lo que está alrededor del monto).
+     */
+    private val FOOTER_RX = Regex(
+        "(consejos de seguridad|para que enviar plata|dudas al|si no reconoces|si no realizaste|nunca te (pediremos|pedira|solicitar)|" +
+            "este (correo|mensaje) (es|fue) (generado|enviado)|no respondas este|aviso de privacidad|" +
+            "politica de (privacidad|tratamiento)|para mas informacion|descarga la app)",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun focus(text: String): String {
+        val plain = Normalizer.normalize(text, Normalizer.Form.NFD).replace(Regex("\\p{Mn}+"), "")
+        val footerAt = FOOTER_RX.find(plain)?.range?.first
+        val cut = if (footerAt != null && footerAt > 0) text.substring(0, minOf(footerAt, text.length)) else text
+        // Si al cortar se perdió el monto (el "pie" estaba arriba), se usa todo el texto
+        val body = if (mainAmount(cut) != null) cut else text
+        val m = mainAmount(body) ?: return body
+        val from = maxOf(0, m.range.first - 260)
+        val to = minOf(body.length, m.range.last + 260)
+        return body.substring(from, to)
     }
 
     // ---------- Nombre de quien envía / recibe ----------
@@ -243,8 +271,10 @@ object TxParser {
      * @param text  título + texto de la notificación, o asunto + cuerpo del correo.
      * @param bankHint banco ya conocido por la app o el remitente del correo.
      */
-    fun parse(text: String, bankHint: String? = null): ParsedTx? {
-        if (text.isBlank()) return null
+    fun parse(fullText: String, bankHint: String? = null): ParsedTx? {
+        if (fullText.isBlank()) return null
+        val bankFromAll = detectBank(fullText)
+        val text = focus(fullText)
         val n = norm(text)
 
         if (containsAny(n, NEVER)) return null
@@ -259,7 +289,7 @@ object TxParser {
 
         val amount = parseAmount(text) ?: return null
         val dir = if (isIn) Direction.IN else Direction.OUT
-        val bank = bankHint ?: detectBank(text)
+        val bank = bankHint ?: detectBank(text) ?: bankFromAll
         val who = if (dir == Direction.IN) findSender(text) else findReceiver(text)
 
         return ParsedTx(

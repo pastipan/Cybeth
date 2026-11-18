@@ -537,7 +537,7 @@ fun SettingsScreen(
                 OutlinedButton(onClick = { openListenerSettings(ctx) }) { Text(if (listenerOn) "Revisar" else "Activar") }
             }
             Text(
-                "Solo se leen apps de bancos (Nequi, Bancolombia, Daviplata…) y SMS de bancos. WhatsApp y demás apps se ignoran. " +
+                "Se leen las apps de bancos (Nequi, Bancolombia, Daviplata…), los SMS de bancos y los correos de bancos que llegan a Gmail u Outlook en este celular. WhatsApp y demás apps se ignoran. " +
                     "Compras, pagos PSE, pagos en línea y retiros no se registran.",
                 color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)
             )

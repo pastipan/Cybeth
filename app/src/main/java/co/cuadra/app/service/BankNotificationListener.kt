@@ -44,19 +44,23 @@ class BankNotificationListener : NotificationListenerService() {
 
         val label = appLabel(pkg)
 
-        // Si llega un correo de un banco a Gmail, revisamos el correo YA (sin esperar los 15 minutos)
-        if (pkg == "com.google.android.gm" || pkg.contains("outlook")) {
+        // Correos de bancos que llegan a Gmail / Outlook / Hotmail en ESTE celular:
+        // se leen directo de la notificación (al instante, como Fortu), sin necesitar contraseña.
+        val isEmailApp = isEmailApp(pkg)
+        var bankFromEmail: String? = null
+        if (isEmailApp) {
             val ex0 = n.extras
             val peek = listOf(
                 ex0.getCharSequence(Notification.EXTRA_TITLE), ex0.getCharSequence(Notification.EXTRA_TEXT),
                 ex0.getCharSequence(Notification.EXTRA_BIG_TEXT), ex0.getCharSequence(Notification.EXTRA_SUB_TEXT)
             ).joinToString(" ") { it?.toString().orEmpty() }
-            if (TxParser.detectBank(peek) != null && Prefs(this).emailLinked) checkMailSoon()
-            return
+            bankFromEmail = TxParser.detectBank(peek) ?: return
+            // Y si hay un correo enlazado, también se revisa completo por si la notificación venía cortada
+            if (Prefs(this).emailLinked) checkMailSoon()
         }
 
         val isSms = isSmsApp(pkg)
-        val bankFromApp = TxParser.detectBank(label) ?: TxParser.detectBank(pkg)
+        val bankFromApp = bankFromEmail ?: TxParser.detectBank(label) ?: TxParser.detectBank(pkg)
         if (bankFromApp == null && !isSms) return
 
         val ex = n.extras
@@ -78,7 +82,7 @@ class BankNotificationListener : NotificationListenerService() {
         val parsed = TxParser.parse(body, bank) ?: return
         val saved = Repo.insertIfNew(
             parsed,
-            source = if (isSms) "SMS" else "Notificación",
+            source = if (isSms) "SMS" else if (isEmailApp) "Aviso de correo" else "Notificación",
             raw = "[$label] $body",
             time = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
         ) ?: return
@@ -108,6 +112,13 @@ class BankNotificationListener : NotificationListenerService() {
         packageManager.getApplicationLabel(ai).toString()
     } catch (_: Exception) {
         pkg
+    }
+
+    private fun isEmailApp(pkg: String): Boolean {
+        val p = pkg.lowercase()
+        return p == "com.google.android.gm" || p.contains("outlook") || p.contains("hotmail") ||
+            p.contains(".email") || p.contains("yahoo.mobile.client.android.mail") || p.contains("protonmail") ||
+            p == "com.microsoft.office.outlook"
     }
 
     private fun isSmsApp(pkg: String): Boolean {

@@ -191,4 +191,35 @@ class TxLogicTest {
     @Test fun cobroConTarjeta() = st("Nequi Negocios: Recibiste un pago con tarjeta de crédito por \$80.000", Direction.IN, 80000, TxStatus.APROBADA)
     @Test fun cobroQrBancolombia() = st("Bancolombia: Recibiste un pago por QR de \$12.500 de JUAN DIAZ en tu cuenta *4821", Direction.IN, 12500, TxStatus.APROBADA, "Juan Diaz", "Bancolombia")
     @Test fun compraConTarjetaAsociadaACuentaSigueIgnorada() = ignored("Compra por \$67.800 en EXITO con tu tarjeta débito asociada a tu cuenta *4821")
+
+    // ---------------- Correo real de Bancolombia (cuenta del negocio) ----------------
+    private val correoBancolombia = """
+        alertasynotificaciones@ayn.notificacionesbancolombia.com
+        Alertas y Notificaciones
+        ¡Listo!
+        Todo salió bien con tus movimientos
+        Bancolombia: CARNES LA ERMITA2, recibiste un pago de JULI JOHANA QUIROZ por \$9,700.00 en tu cuenta *3541 conectado a la llave 0091593354 el 18/11/2026 a las 13:13. Con codigo QR es facil y de una. Dudas al 018000912345.
+        Para que enviar plata siempre sea un éxito, estos consejos de seguridad:
+        No compartas tus claves. Nunca hagas compras o pagos PSE desde enlaces desconocidos. Si una transferencia queda pendiente o es rechazada, revisa en la app.
+    """.trimIndent()
+
+    @Test fun correoRealBancolombia() {
+        val p = TxParser.parse(correoBancolombia, TxParser.detectBank("alertasynotificaciones@ayn.notificacionesbancolombia.com"))
+        assertTrue("Debió leer el correo de Bancolombia", p != null)
+        assertEquals(Direction.IN, p!!.direction)
+        assertEquals(9700L, p.amount)
+        assertEquals("Juli Johana Quiroz", p.counterparty)
+        assertEquals("Bancolombia", p.bank)
+        assertEquals("3541", p.last4)
+        assertEquals("El pie del correo no debe cambiar el estado", TxStatus.APROBADA, p.status)
+    }
+    @Test fun notificacionGmailDelCorreo() {
+        // Lo que muestra la notificación de Gmail (remitente + asunto + texto)
+        val n = "alertasynotificaciones@ayn.notificacionesbancolombia.com\nAlertas y Notificaciones\n¡Listo! Todo salió bien con tus movimientos Bancolombia: CARNES LA ERMITA2, recibiste un pago de JULI JOHANA QUIROZ por \$9,700.00 en tu cuenta *3541"
+        val p = TxParser.parse(n, "Bancolombia")!!
+        assertEquals(9700L, p.amount); assertEquals("Juli Johana Quiroz", p.counterparty)
+    }
+    @Test fun nequiPorCobrarConRecuerda() = st(
+        "Le enviaste \$20.000 a 3001234567. Recuerda que la persona tiene 30 días para reclamarla.",
+        Direction.OUT, 20000, TxStatus.PENDIENTE_COBRO)
 }
