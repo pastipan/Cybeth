@@ -25,7 +25,11 @@ import javax.mail.PasswordAuthentication
 import javax.mail.Session
 import javax.mail.Transport
 import javax.mail.internet.InternetAddress
+import javax.activation.CommandMap
+import javax.activation.MailcapCommandMap
+import javax.mail.internet.MimeBodyPart
 import javax.mail.internet.MimeMessage
+import javax.mail.internet.MimeMultipart
 
 /**
  * Manda un correo (por ejemplo a la jefe, que tiene iPhone) cada vez que se detecta
@@ -45,7 +49,23 @@ object ForwardMail {
         }
     }
 
-    private fun send(from: String, pass: String, to: List<String>, subject: String, html: String) {
+    /**
+     * En Android, la librería de correo a veces no encuentra cómo "armar" un mensaje HTML
+     * (error "no object DCH for MIME type text/html"). Esto le registra los tipos a mano.
+     */
+    fun fixMailOnAndroid() {
+        Thread.currentThread().contextClassLoader = ForwardMail::class.java.classLoader
+        val mc = CommandMap.getDefaultCommandMap() as? MailcapCommandMap ?: MailcapCommandMap()
+        mc.addMailcap("text/html;; x-java-content-handler=com.sun.mail.handlers.text_html")
+        mc.addMailcap("text/xml;; x-java-content-handler=com.sun.mail.handlers.text_xml")
+        mc.addMailcap("text/plain;; x-java-content-handler=com.sun.mail.handlers.text_plain")
+        mc.addMailcap("multipart/*;; x-java-content-handler=com.sun.mail.handlers.multipart_mixed; x-java-fallback-entry=true")
+        mc.addMailcap("message/rfc822;; x-java-content-handler=com.sun.mail.handlers.message_rfc822")
+        CommandMap.setDefaultCommandMap(mc)
+    }
+
+    private fun send(from: String, pass: String, to: List<String>, subject: String, html: String, plain: String) {
+        fixMailOnAndroid()
         val host = smtpHost(from)
         val props = Properties().apply {
             put("mail.smtp.auth", "true")
@@ -67,7 +87,11 @@ object ForwardMail {
             setFrom(InternetAddress(from, "Cybeth SG", "UTF-8"))
             setRecipients(Message.RecipientType.TO, to.map { InternetAddress(it) }.toTypedArray())
             setSubject(subject, "UTF-8")
-            setContent(html, "text/html; charset=UTF-8")
+            // Texto simple + versión bonita (HTML): si el correo del jefe no muestra HTML, ve el texto
+            val alt = MimeMultipart("alternative")
+            alt.addBodyPart(MimeBodyPart().apply { setText(plain, "UTF-8", "plain") })
+            alt.addBodyPart(MimeBodyPart().apply { setText(html, "UTF-8", "html") })
+            setContent(alt)
             sentDate = Date()
         }
         Transport.send(msg)
@@ -111,6 +135,37 @@ object ForwardMail {
 </div>""".trimIndent()
     }
 
+    fun plainFor(t: Tx): String {
+        val inc = t.direction == Direction.IN
+        return buildString {
+            appendLine(if (inc) "Te llegó una transferencia" else "Se envió una transferencia")
+            appendLine((if (inc) "+" else "-") + money(t.amount))
+            appendLine((if (inc) "De: " else "Para: ") + (t.counterparty ?: "No identificado"))
+            appendLine((if (inc) "Llegó a: " else "Salió de: ") + (t.bank ?: "Banco no identificado") + (t.last4?.let { " ****$it" } ?: ""))
+            t.reference?.let { appendLine("Referencia: $it") }
+            appendLine("Fecha: " + whenText(t.time))
+            appendLine()
+            appendLine("Aviso automático de Cybeth SG")
+        }
+    }
+
+    /** Explica el error en palabras simples, con el detalle técnico al final. */
+    fun explain(e: Throwable): String {
+        val all = generateSequence(e) { it.cause }.joinToString(" | ") { "${it.javaClass.simpleName}: ${it.message}" }
+        val low = all.lowercase()
+        val simple = when {
+            e is javax.mail.AuthenticationFailedException || low.contains("535") || low.contains("username and password not accepted") ->
+                "Google rechazó el correo o la contraseña de aplicación. Revisa que sean las 16 letras del Gmail de la empresa."
+            low.contains("unknownhost") || low.contains("unable to resolve") || low.contains("network") || low.contains("timeout") || low.contains("timed out") ->
+                "No hay internet o la red bloquea el envío. Prueba con datos móviles."
+            low.contains("dch") || low.contains("unsupporteddatatype") -> "Error interno al armar el correo."
+            low.contains("invalid address") || low.contains("addressexception") || low.contains("553") || low.contains("550") ->
+                "El correo del jefe parece estar mal escrito."
+            else -> "No se pudo enviar."
+        }
+        return "$simple\n(Detalle: ${all.take(300)})"
+    }
+
     /** Envía el aviso de una transferencia a los correos configurados. */
     suspend fun sendFor(ctx: Context, t: Tx): Result = withContext(Dispatchers.IO) {
         val prefs = Prefs(ctx)
@@ -120,12 +175,10 @@ object ForwardMail {
         if (from.isNullOrBlank() || pass.isNullOrBlank()) return@withContext Result(false, "Primero enlaza tu Gmail en Ajustes")
         if (to.isEmpty()) return@withContext Result(false, "No hay correos de destino")
         try {
-            send(from, pass, to, subjectFor(t), htmlFor(t))
+            send(from, pass, to, subjectFor(t), htmlFor(t), plainFor(t))
             Result(true, "Enviado a ${to.joinToString(", ")}")
-        } catch (e: javax.mail.AuthenticationFailedException) {
-            Result(false, "Google rechazó la contraseña de aplicación")
-        } catch (e: Exception) {
-            Result(false, "No se pudo enviar: ${e.message ?: e.javaClass.simpleName}")
+        } catch (e: Throwable) {
+            Result(false, explain(e))
         }
     }
 
@@ -162,7 +215,7 @@ class ForwardWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
         Prefs(applicationContext).lastForwardResult = r.message
         return when {
             r.ok -> Result.success()
-            runAttemptCount < 5 && !r.message.contains("contraseña") && !r.message.contains("enlaza") -> Result.retry()
+            runAttemptCount < 5 && !r.message.contains("contraseña") && !r.message.contains("enlaza") && !r.message.contains("mal escrito") -> Result.retry()
             else -> Result.failure()
         }
     }

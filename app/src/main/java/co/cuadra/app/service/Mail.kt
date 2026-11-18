@@ -46,6 +46,7 @@ object MailChecker {
     }
 
     private fun connect(email: String, password: String): javax.mail.Store {
+        ForwardMail.fixMailOnAndroid()
         val props = Properties().apply {
             put("mail.store.protocol", "imaps")
             put("mail.imaps.ssl.enable", "true")

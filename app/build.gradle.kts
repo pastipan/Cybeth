@@ -12,15 +12,26 @@ android {
         applicationId = "co.cuadra.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Llave fija de Cybeth: así cada versión nueva se instala encima de la anterior sin borrar nada.
+    val ksFile = file("keystore.properties")
+    val ks = java.util.Properties().apply { if (ksFile.exists()) ksFile.inputStream().use { load(it) } }
+    signingConfigs {
+        create("cybeth") {
+            storeFile = file(ks.getProperty("storeFile", "cybeth.jks"))
+            storePassword = ks.getProperty("storePassword")
+            keyAlias = ks.getProperty("keyAlias", "cybeth")
+            keyPassword = ks.getProperty("keyPassword")
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Firmado con la llave de depuración para poder instalarlo directo en el celular.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (ksFile.exists()) signingConfigs.getByName("cybeth") else signingConfigs.getByName("debug")
         }
     }
     compileOptions {
