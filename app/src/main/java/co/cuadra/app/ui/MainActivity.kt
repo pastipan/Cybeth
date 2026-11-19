@@ -1,7 +1,13 @@
 package co.cuadra.app.ui
 
 import android.os.Bundle
+import android.Manifest
+import android.os.Build
 import android.os.SystemClock
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import android.view.WindowManager
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricPrompt
@@ -104,6 +110,13 @@ fun AppRoot(resumeTick: Int, onLock: () -> Unit, requestBiometric: (onOk: () -> 
     val status = statusName?.let { TxStatus.valueOf(it) }
     val dir = dirName?.let { Direction.valueOf(it) }
     val txs by Repo.txs.collectAsStateWithLifecycle()
+
+    // Pedir permiso para mostrar avisos (Android 13 o más nuevo) apenas se entra
+    val ctx = LocalContext.current
+    val askNotif = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        if (!canPostNotifications(ctx) && Build.VERSION.SDK_INT >= 33) askNotif.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
 
     Scaffold(
         containerColor = Bg,

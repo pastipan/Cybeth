@@ -809,6 +809,22 @@ private fun ForwardSection(prefs: Prefs, refresh: Int) {
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
     val linked = remember(refresh) { prefs.emailLinked }
+    var resultDialog by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    resultDialog?.let { (ok, text) ->
+        AlertDialog(
+            onDismissRequest = { resultDialog = null },
+            containerColor = CardBg,
+            title = { Text(if (ok) "✉️ Correo enviado" else "⚠️ No se pudo enviar", color = if (ok) Accent else Warn, fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    if (ok) "$text.\n\nDile a la persona que revise su bandeja de entrada. Si no lo ve en 1 minuto, que revise Spam / Correo no deseado y lo marque como \"No es spam\"."
+                    else text,
+                    color = TextC
+                )
+            },
+            confirmButton = { TextButton(onClick = { resultDialog = null }) { Text("Entendido", color = Accent) } },
+        )
+    }
 
     SectionTitle("Avisar por correo")
     Panel {
@@ -846,6 +862,7 @@ private fun ForwardSection(prefs: Prefs, refresh: Int) {
                     val r = ForwardMail.sendTest(ctx)
                     msg = if (r.ok) "✓ ${r.message}. Revisa la bandeja (y la de spam)." else r.message
                     busy = false
+                    resultDialog = r.ok to r.message
                 }
             },
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp)

@@ -47,6 +47,7 @@ object DayClose {
         }
         if (res.ok) prefs.lastCloseAt = System.currentTimeMillis()
         prefs.lastCloseResult = res.message
+        Announcer.notifyEmail(ctx, res.ok, if (res.ok) "Cierre del día enviado" else "No se pudo enviar el cierre", if (res.ok) "${r.subject()}\n${res.message}" else res.message)
         res
     }
 

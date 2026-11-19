@@ -24,6 +24,8 @@ import java.util.Locale
 /** Avisa cuando entra (o sale) plata: en voz alta y con una notificación propia. */
 object Announcer {
     private const val CHANNEL = "transferencias"
+    private const val CHANNEL_MAIL = "correos"
+    private var mailNotifId = 50_000
     private var tts: TextToSpeech? = null
     private var ready = false
     private val pending = mutableListOf<String>()
@@ -34,6 +36,9 @@ object Announcer {
             val ch = NotificationChannel(CHANNEL, "Transferencias", NotificationManager.IMPORTANCE_HIGH)
             ch.description = "Aviso cuando te llega o envías plata"
             app.getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
+            val ch2 = NotificationChannel(CHANNEL_MAIL, "Correos enviados", NotificationManager.IMPORTANCE_DEFAULT)
+            ch2.description = "Confirma cuando se envía (o falla) un correo a la jefe"
+            app.getSystemService(NotificationManager::class.java).createNotificationChannel(ch2)
         }
     }
 
@@ -73,6 +78,32 @@ object Announcer {
         if (prefs.notify) notify(ctx, t)
         // Aviso por correo (por ejemplo a la jefe, que tiene iPhone)
         ForwardMail.enqueue(ctx, t)
+    }
+
+    /**
+     * Aviso en el celular de que el correo SÍ salió (o de por qué no salió),
+     * para no tener que adivinar si a la jefe le llegó.
+     */
+    fun notifyEmail(ctx: Context, ok: Boolean, title: String, body: String) {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) return
+        val pi = PendingIntent.getActivity(
+            ctx, 1, Intent(ctx, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val n = NotificationCompat.Builder(ctx, CHANNEL_MAIL)
+            .setSmallIcon(R.drawable.ic_stat_cuadra)
+            .setContentTitle((if (ok) "✉️ " else "⚠️ ") + title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setColor(if (ok) 0xFF0FB5A3.toInt() else 0xFFE59A12.toInt())
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+        try {
+            NotificationManagerCompat.from(ctx).notify(mailNotifId++, n)
+        } catch (_: SecurityException) { }
     }
 
     private fun notify(ctx: Context, t: Tx) {

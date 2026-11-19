@@ -210,6 +210,12 @@ object ForwardMail {
 
     /** Correo de prueba para comprobar que a la jefe sí le llega. */
     suspend fun sendTest(ctx: Context): Result {
+        val r = sendTestInner(ctx)
+        Announcer.notifyEmail(ctx, r.ok, if (r.ok) "Correo de prueba enviado" else "No se pudo enviar la prueba", r.message)
+        return r
+    }
+
+    private suspend fun sendTestInner(ctx: Context): Result {
         val fake = Tx(
             id = -1, amount = 1000, direction = Direction.IN, counterparty = "Prueba de Cybeth", bank = "Nequi",
             last4 = null, reference = "PRUEBA", source = "Prueba", raw = "Este es un correo de prueba de Cybeth SG.",
@@ -232,7 +238,11 @@ object ForwardMail {
         scope.launch {
             val r = sendFor(app, t)
             Prefs(app).lastForwardResult = r.message
-            if (!r.ok) enqueueRetry(app, t)
+            if (r.ok) Announcer.notifyEmail(app, true, "Correo enviado a la jefe", "${subjectFor(t)}\n${r.message}")
+            else {
+                Announcer.notifyEmail(app, false, "No se pudo enviar el correo (se reintentará)", r.message)
+                enqueueRetry(app, t)
+            }
         }
     }
 
@@ -253,6 +263,7 @@ class ForwardWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ct
         val t = Repo.txs.value.firstOrNull { it.id == id }?.copy(updated = inputData.getBoolean("upd", false)) ?: return Result.success()
         val r = ForwardMail.sendFor(applicationContext, t)
         Prefs(applicationContext).lastForwardResult = r.message
+        if (r.ok) Announcer.notifyEmail(applicationContext, true, "Correo enviado a la jefe", "${ForwardMail.subjectFor(t)}\n${r.message}")
         return when {
             r.ok -> Result.success()
             runAttemptCount < 5 && !r.message.contains("contraseña") && !r.message.contains("enlaza") && !r.message.contains("mal escrito") -> Result.retry()
