@@ -78,6 +78,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onResume() {
         super.onResume()
+        co.cuadra.app.service.Watchdog.rebind(this)
         resumeTick++
     }
 

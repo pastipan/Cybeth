@@ -45,6 +45,9 @@ class BankNotificationListener : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
+        // Latido: anotar (máximo una vez por minuto) que el lector sigue recibiendo avisos
+        val now = System.currentTimeMillis()
+        if (now - lastBeat > 60_000L) { lastBeat = now; try { Prefs(this).lastAnyNotifAt = now } catch (_: Exception) { } }
         try {
             handle(sbn)
         } catch (_: Exception) {
@@ -140,6 +143,7 @@ class BankNotificationListener : NotificationListenerService() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @Volatile private var lastBeat = 0L
     @Volatile private var lastMailCheck = 0L
 
     private fun checkMailSoon() {

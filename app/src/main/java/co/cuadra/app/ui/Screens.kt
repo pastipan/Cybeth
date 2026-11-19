@@ -302,7 +302,12 @@ private fun DiagnosticsSection(resumeTick: Int) {
             disc > conn -> "⚠️ El lector se desconectó ${ago(disc)}. Toca \"Reiniciar lector\"."
             else -> "✓ Lector conectado desde ${whenText(conn)}"
         }
+        val beat = remember(resumeTick, tick) { prefs.lastAnyNotifAt }
         Text(status, color = if (status.startsWith("✓")) Accent else Warn, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Última notificación recibida (de cualquier app): ${ago(beat)}",
+            color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
             OutlinedButton(onClick = {
                 try {
@@ -403,6 +408,7 @@ fun HomeScreen(
     val ctx = LocalContext.current
     val listenerOn = remember(resumeTick) { listenerEnabled(ctx) }
     val emailOn = remember(resumeTick) { Prefs(ctx).emailLinked }
+    val listenerDown = remember(resumeTick) { co.cuadra.app.service.Watchdog.looksDown(ctx) }
     val today = txs.filter { isToday(it.time) }
     // Solo cuenta la plata que de verdad entró o salió (aprobada)
     val okToday = today.filter { it.status == TxStatus.APROBADA }
@@ -432,6 +438,13 @@ fun HomeScreen(
                 "Para saber cuándo te llega plata, Cybeth necesita leer las notificaciones de Nequi y de tus bancos.",
                 "Activar ahora"
             ) { openListenerSettings(ctx) }
+        }
+        if (listenerOn && listenerDown) item {
+            Warning(
+                "Cybeth dejó de escuchar",
+                "Android desconectó el lector de notificaciones. Toca el botón para reconectarlo; si no se arregla, apaga y vuelve a prender el permiso de Cybeth.",
+                "Reconectar"
+            ) { co.cuadra.app.service.Watchdog.rebind(ctx); openListenerSettings(ctx) }
         }
         if (!emailOn) item {
             Warning("Enlaza tu correo (opcional)", "Así también se leen los correos que mandan los bancos.", "Enlazar correo", onSettings)

@@ -6,6 +6,7 @@ import co.cuadra.app.data.Repo
 import co.cuadra.app.service.Announcer
 import co.cuadra.app.service.DayClose
 import co.cuadra.app.service.MailWorker
+import co.cuadra.app.service.Watchdog
 
 class CuadraApp : Application() {
     override fun onCreate() {
@@ -14,5 +15,7 @@ class CuadraApp : Application() {
         Announcer.init(this)
         if (Prefs(this).emailLinked) MailWorker.schedule(this)
         DayClose.schedule(this, replace = false)
+        Watchdog.rebind(this)
+        Watchdog.schedule(this)
     }
 }

@@ -145,6 +145,11 @@ class Prefs(ctx: Context) {
         get() = p.getLong("listenerConnectedAt", 0L)
         set(v) = p.edit().putLong("listenerConnectedAt", v).apply()
 
+    /** Última vez que llegó CUALQUIER notificación al lector (prueba de que está vivo). */
+    var lastAnyNotifAt: Long
+        get() = p.getLong("lastAnyNotifAt", 0L)
+        set(v) = p.edit().putLong("lastAnyNotifAt", v).apply()
+
     var listenerDisconnectedAt: Long
         get() = p.getLong("listenerDisconnectedAt", 0L)
         set(v) = p.edit().putLong("listenerDisconnectedAt", v).apply()
