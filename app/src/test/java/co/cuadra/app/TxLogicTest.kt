@@ -236,4 +236,20 @@ class TxLogicTest {
         assertEquals("es compra, PSE, retiro o recarga", TxParser.whyIgnored("Pago PSE exitoso por \$94.300 a ENEL"))
         assertEquals("no trae un monto en pesos", TxParser.whyIgnored("Te enviamos tu extracto"))
     }
+
+    // ---------------- Notificación REAL de Nequi (sin signo $) ----------------
+    @Test fun nequiRealSinSignoPesos() {
+        val p = TxParser.parseFromBankApp("Envío\nCRISTIAN GUANCHA te envió 1000, ¡lo mejor!", "Nequi")
+        assertTrue("Debió leer la notificación real de Nequi", p != null)
+        assertEquals(Direction.IN, p!!.direction)
+        assertEquals(1000L, p.amount)
+        assertEquals("Cristian Guancha", p.counterparty)
+        assertEquals(TxStatus.APROBADA, p.status)
+    }
+    @Test fun nequiRealConPuntos() = assertEquals(25000L, TxParser.parse("Envío\nANA RUIZ te envió 25.000, ¡lo mejor!", "Nequi")!!.amount)
+    @Test fun nequiEnviasteSinSigno() {
+        val p = TxParser.parse("Envío\nLe enviaste 5000 a PEDRO GOMEZ", "Nequi")!!
+        assertEquals(Direction.OUT, p.direction); assertEquals(5000L, p.amount)
+    }
+    @Test fun numeroSueltoNoEsMonto() = assertNull(TxParser.parseFromBankApp("Tu código 1234 vence pronto", "Nequi"))
 }

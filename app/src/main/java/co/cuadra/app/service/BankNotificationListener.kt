@@ -27,6 +27,13 @@ class BankNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         Repo.init(applicationContext)
         Prefs(this).listenerConnectedAt = System.currentTimeMillis()
+        // Revisar las notificaciones que ya están en la barra (ej. pagos que llegaron mientras
+        // Cybeth estaba apagada o antes de actualizar). Las repetidas no se guardan dos veces.
+        try {
+            activeNotifications?.sortedBy { it.postTime }?.forEach { sbn ->
+                try { handle(sbn) } catch (_: Exception) { }
+            }
+        } catch (_: Exception) { }
     }
 
     override fun onListenerDisconnected() {

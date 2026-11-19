@@ -167,8 +167,20 @@ object TxParser {
         return if (v > 0) v else null
     }
 
+    /**
+     * Nequi a veces escribe el monto SIN signo $: "CRISTIAN GUANCHA te envió 1000, ¡lo mejor!".
+     * Se acepta un número justo después de palabras como "te envió", "recibiste", "te llegaron"...
+     */
+    private val AMOUNT_AFTER_WORD_RX = Regex(
+        """(?:env[ií][oó]|enviaron|recibiste|llegaron|lleg[oó]|enviaste|transfiri[oó]|transfirieron|transferiste|pag[oó]|pagaron|consign[oó]|abon[oó])""" +
+            """[ \t]+(?:de[ \t]+|por[ \t]+)?(?:\$[ \t]?)?([0-9]{1,3}(?:[.,][0-9]{3})+|[0-9]{3,})(?:[.,][0-9]{1,2})?(?![0-9])""",
+        RegexOption.IGNORE_CASE
+    )
+
     private fun mainAmount(text: String): MatchResult? {
-        val all = AMOUNT_RX.findAll(text).toList().ifEmpty { AMOUNT_PESOS_RX.findAll(text).toList() }
+        val all = AMOUNT_RX.findAll(text).toList()
+            .ifEmpty { AMOUNT_AFTER_WORD_RX.findAll(text).toList() }
+            .ifEmpty { AMOUNT_PESOS_RX.findAll(text).toList() }
         return all.firstOrNull { mm ->
             val before = norm(text.substring(maxOf(0, mm.range.first - 28), mm.range.first))
             !(before.contains("saldo") || before.contains("disponible") || before.contains("cupo") || before.contains("costo") || before.contains("comision"))
@@ -203,6 +215,9 @@ object TxParser {
 
     private const val UP = "A-ZÁÉÍÓÚÑÜ"
     private const val WORD = "[$UP][A-Za-zÁÉÍÓÚÑÜáéíóúñü.&'-]*"
+    /** Palabras que pueden quedar pegadas antes del nombre ("Envío CRISTIAN…"). */
+    private val LEADING_NOISE = setOf("envio", "nequi", "listo", "transferencia", "pago", "recibido", "plata", "movimiento")
+
     private val STOP_TAIL = setOf("en", "a", "por", "con", "ref", "referencia", "desde", "tu", "su", "el", "la", "al", "y", "cuenta", "hoy", "por", "valor", "fecha", "hora", "mensaje", "de")
 
     private fun cleanName(raw: String?): String? {
@@ -216,7 +231,7 @@ object TxParser {
         }
         var toks = cut.map { it.trim(',', '.', ':') }.filter { it.isNotBlank() }
         while (toks.isNotEmpty() && norm(toks.last()).trim('.', ',', ':') in STOP_TAIL) toks = toks.dropLast(1)
-        while (toks.isNotEmpty() && norm(toks.first()) in STOP_TAIL) toks = toks.drop(1)
+        while (toks.isNotEmpty() && (norm(toks.first()) in STOP_TAIL || norm(toks.first()) in LEADING_NOISE)) toks = toks.drop(1)
         if (toks.isEmpty()) return null
         val name = toks.joinToString(" ").trim(',', '.', ':')
         if (name.length < 3) return null
@@ -236,7 +251,7 @@ object TxParser {
 
     private fun findSender(text: String): String? {
         // "Laura Méndez te envió $42.500"
-        Regex("((?:$WORD\\s+){0,4}$WORD)\\s+te\\s+(?:envi|transfiri|consign|pag)").find(text)?.let { m ->
+        Regex("((?:$WORD[ \\t]+){0,4}$WORD)[ \\t]+te[ \\t]+(?:envi|transfiri|consign|pag)").find(text)?.let { m ->
             cleanName(m.groupValues[1])?.let { return it }
         }
         // "...de CARLOS RUIZ en tu cuenta" / "De: PEDRO SALAZAR"
