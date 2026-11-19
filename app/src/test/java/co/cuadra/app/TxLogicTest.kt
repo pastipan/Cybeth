@@ -252,4 +252,15 @@ class TxLogicTest {
         assertEquals(Direction.OUT, p.direction); assertEquals(5000L, p.amount)
     }
     @Test fun numeroSueltoNoEsMonto() = assertNull(TxParser.parseFromBankApp("Tu código 1234 vence pronto", "Nequi"))
+
+    // ---------------- Dos pagos iguales seguidos (mismo texto) ----------------
+    @Test fun dosPagosIgualesDeLaMismaPersonaSonDos() {
+        val raw = "[Nequi Colombia] Envío\nCRISTIAN GUANCHA te envió 1000, ¡lo mejor!"
+        val a = Tx(1, 1000, Direction.IN, "Cristian Guancha", "Nequi", null, null, "Notificación", raw, 1_000_000)
+        val p = TxParser.parseFromBankApp("Envío\nCRISTIAN GUANCHA te envió 1000, ¡lo mejor!", "Nequi")!!
+        // Aviso NUEVO del banco (otra huella): es otro pago
+        assertFalse(Dedup.isDuplicate(listOf(a), p, "Notificación", raw, 1_060_000, sameTextIsRepeat = false))
+        // El mismo pago avisado también por SMS: sigue siendo uno solo
+        assertTrue(Dedup.isDuplicate(listOf(a), p, "SMS", "[Mensajes] Nequi: CRISTIAN GUANCHA te envió 1000", 1_030_000, sameTextIsRepeat = false))
+    }
 }

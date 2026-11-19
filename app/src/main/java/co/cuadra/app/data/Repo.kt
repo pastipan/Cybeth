@@ -50,8 +50,8 @@ object Repo {
      * @return el movimiento guardado, o null si era repetido.
      */
     @Synchronized
-    fun insertIfNew(p: ParsedTx, source: String, raw: String, time: Long = System.currentTimeMillis()): Tx? {
-        if (Dedup.isDuplicate(_txs.value, p, source, raw.take(2000), time)) return null
+    fun insertIfNew(p: ParsedTx, source: String, raw: String, time: Long = System.currentTimeMillis(), isNewNotification: Boolean = false): Tx? {
+        if (Dedup.isDuplicate(_txs.value, p, source, raw.take(2000), time, sameTextIsRepeat = !isNewNotification)) return null
         // ¿Es un cambio de estado de una que ya teníamos? (ej. "en proceso" → "aprobada")
         Dedup.statusUpdateFor(_txs.value, p, time)?.let { old ->
             val cv = ContentValues().apply {
@@ -88,6 +88,19 @@ object Repo {
         reload()
     }
 
+    /** Cada aviso del banco tiene su propia "huella" (app + id + hora en que lo creó el banco). */
+    @Synchronized
+    fun notifSeen(key: String): Boolean =
+        db.readableDatabase.rawQuery("SELECT 1 FROM seen_notif WHERE k=?", arrayOf(key)).use { it.moveToFirst() }
+
+    @Synchronized
+    fun markNotifSeen(key: String) {
+        val d = db.writableDatabase
+        d.insertWithOnConflict("seen_notif", null, ContentValues().apply { put("k", key); put("t", System.currentTimeMillis()) }, SQLiteDatabase.CONFLICT_IGNORE)
+        // Guardar solo las de los últimos 3 días
+        d.delete("seen_notif", "t < ?", arrayOf((System.currentTimeMillis() - 3 * 24 * 60 * 60 * 1000L).toString()))
+    }
+
     @Synchronized
     fun emailSeen(msgId: String): Boolean =
         db.readableDatabase.rawQuery("SELECT 1 FROM seen_email WHERE mid=?", arrayOf(msgId)).use { it.moveToFirst() }
@@ -101,7 +114,7 @@ object Repo {
         )
     }
 
-    private class Helper(ctx: Context) : SQLiteOpenHelper(ctx, "cuadra.db", null, 2) {
+    private class Helper(ctx: Context) : SQLiteOpenHelper(ctx, "cuadra.db", null, 3) {
         override fun onCreate(d: SQLiteDatabase) {
             d.execSQL(
                 """CREATE TABLE tx(
@@ -112,10 +125,12 @@ object Repo {
             )
             d.execSQL("CREATE INDEX tx_time ON tx(time)")
             d.execSQL("CREATE TABLE seen_email(mid TEXT PRIMARY KEY)")
+            d.execSQL("CREATE TABLE seen_notif(k TEXT PRIMARY KEY, t INTEGER NOT NULL)")
         }
 
         override fun onUpgrade(d: SQLiteDatabase, oldV: Int, newV: Int) {
             if (oldV < 2) d.execSQL("ALTER TABLE tx ADD COLUMN status TEXT NOT NULL DEFAULT 'APROBADA'")
+            if (oldV < 3) d.execSQL("CREATE TABLE IF NOT EXISTS seen_notif(k TEXT PRIMARY KEY, t INTEGER NOT NULL)")
         }
     }
 }

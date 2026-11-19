@@ -31,7 +31,7 @@ class BankNotificationListener : NotificationListenerService() {
         // Cybeth estaba apagada o antes de actualizar). Las repetidas no se guardan dos veces.
         try {
             activeNotifications?.sortedBy { it.postTime }?.forEach { sbn ->
-                try { handle(sbn) } catch (_: Exception) { }
+                try { handle(sbn, fromScan = true) } catch (_: Exception) { }
             }
         } catch (_: Exception) { }
     }
@@ -52,10 +52,18 @@ class BankNotificationListener : NotificationListenerService() {
         }
     }
 
-    private fun handle(sbn: StatusBarNotification) {
+    /**
+     * @param fromScan true cuando se revisan avisos viejos que ya estaban en la barra:
+     *   ahí, si el texto es igual a uno ya guardado, se asume que es el mismo pago (no se duplica).
+     */
+    private fun handle(sbn: StatusBarNotification, fromScan: Boolean = false) {
         val pkg = sbn.packageName ?: return
         if (pkg == packageName) return
         val n = sbn.notification ?: return
+        // Un resumen de grupo repite lo que ya dicen las notificaciones de adentro: se salta si hay alguna
+        if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0 && hasChildren(sbn)) return
+        // Huella única de ESTE aviso: misma huella = el mismo aviso visto otra vez (no un pago nuevo)
+        val notifKey = "$pkg|${sbn.key}|${n.`when`}|${sbn.postTime.takeIf { n.`when` == 0L } ?: 0}"
 
         val label = appLabel(pkg)
 
@@ -106,6 +114,8 @@ class BankNotificationListener : NotificationListenerService() {
         prefs.lastBankNotif = "$label · $hora"
 
         val hhmm = SimpleDateFormat("h:mm a", Locale("es", "CO")).format(Date())
+        if (Repo.notifSeen(notifKey)) return // el mismo aviso otra vez: no se registra ni se anota
+        Repo.markNotifSeen(notifKey)
         val oneLine = body.replace("\n", " · ")
         // Directo de la app del banco: más flexible. SMS y correos: estricto.
         val parsed = if (!isSms && !isEmailApp) TxParser.parseFromBankApp(body, bank) else TxParser.parse(body, bank)
@@ -117,10 +127,12 @@ class BankNotificationListener : NotificationListenerService() {
             parsed,
             source = if (isSms) "SMS" else if (isEmailApp) "Aviso de correo" else "Notificación",
             raw = "[$label] $body",
-            time = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
+            time = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis(),
+            // Aviso nuevo del banco: aunque el texto sea igual a otro, es otro pago
+            isNewNotification = !isEmailApp && !fromScan
         )
         if (saved == null) {
-            prefs.addNotifLog("$hhmm · $label · = Repetida (ya estaba guardada)\n$oneLine")
+            prefs.addNotifLog("$hhmm · $label · = Ya registrada por otro aviso (SMS o correo del mismo pago)\n$oneLine")
             return
         }
         prefs.addNotifLog("$hhmm · $label · ✓ ${if (saved.updated) "Estado actualizado" else "Guardada"}: ${co.cuadra.app.ui.Wording.headline(saved)}\n$oneLine")
@@ -144,6 +156,14 @@ class BankNotificationListener : NotificationListenerService() {
         scope.cancel()
         super.onDestroy()
     }
+
+    private fun hasChildren(summary: StatusBarNotification): Boolean = try {
+        val g = summary.notification.group
+        g != null && (activeNotifications ?: emptyArray()).any {
+            it.packageName == summary.packageName && it.key != summary.key && it.notification.group == g &&
+                (it.notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0
+        }
+    } catch (_: Exception) { false }
 
     private fun appLabel(pkg: String): String = try {
         val ai = packageManager.getApplicationInfo(pkg, 0)

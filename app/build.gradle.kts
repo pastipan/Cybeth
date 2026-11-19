@@ -14,8 +14,8 @@ android {
         applicationId = "co.cuadra.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "1.7"
+        versionCode = 9
+        versionName = "1.8"
     }
 
     // Llave fija de Cybeth: así cada versión nueva se instala encima de la anterior sin borrar nada.
