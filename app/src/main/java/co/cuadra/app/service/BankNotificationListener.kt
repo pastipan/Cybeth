@@ -26,6 +26,15 @@ class BankNotificationListener : NotificationListenerService() {
 
     override fun onListenerConnected() {
         Repo.init(applicationContext)
+        Prefs(this).listenerConnectedAt = System.currentTimeMillis()
+    }
+
+    override fun onListenerDisconnected() {
+        Prefs(this).listenerDisconnectedAt = System.currentTimeMillis()
+        // Pedirle a Android que lo vuelva a conectar
+        try {
+            requestRebind(android.content.ComponentName(this, BankNotificationListener::class.java))
+        } catch (_: Exception) { }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
@@ -40,7 +49,6 @@ class BankNotificationListener : NotificationListenerService() {
         val pkg = sbn.packageName ?: return
         if (pkg == packageName) return
         val n = sbn.notification ?: return
-        if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) return
 
         val label = appLabel(pkg)
 
@@ -68,7 +76,18 @@ class BankNotificationListener : NotificationListenerService() {
         val text = ex.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
         val big = ex.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString().orEmpty()
         val lines = ex.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.joinToString("\n").orEmpty()
-        val body = listOf(title, if (big.length > text.length) big else text, lines)
+        // Algunas apps ponen el texto en "mensajes" (estilo chat) o en el resumen
+        val msgs = try {
+            @Suppress("DEPRECATION")
+            ex.getParcelableArray(Notification.EXTRA_MESSAGES)?.mapNotNull { (it as? android.os.Bundle)?.getCharSequence("text")?.toString() }
+                ?.joinToString("\n").orEmpty()
+        } catch (_: Exception) { "" }
+        val extra = listOfNotNull(
+            ex.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString(),
+            ex.getCharSequence(Notification.EXTRA_SUMMARY_TEXT)?.toString(),
+            n.tickerText?.toString(),
+        ).joinToString("\n")
+        val body = listOf(title, if (big.length > text.length) big else text, lines, msgs, extra)
             .filter { it.isNotBlank() }.distinct().joinToString("\n")
         if (body.isBlank()) return
 
@@ -79,13 +98,25 @@ class BankNotificationListener : NotificationListenerService() {
         val hora = SimpleDateFormat("d MMM h:mm a", Locale("es", "CO")).format(Date())
         prefs.lastBankNotif = "$label · $hora"
 
-        val parsed = TxParser.parse(body, bank) ?: return
+        val hhmm = SimpleDateFormat("h:mm a", Locale("es", "CO")).format(Date())
+        val oneLine = body.replace("\n", " · ")
+        // Directo de la app del banco: más flexible. SMS y correos: estricto.
+        val parsed = if (!isSms && !isEmailApp) TxParser.parseFromBankApp(body, bank) else TxParser.parse(body, bank)
+        if (parsed == null) {
+            prefs.addNotifLog("$hhmm · $label · ✗ Ignorada: ${TxParser.whyIgnored(body)}\n$oneLine")
+            return
+        }
         val saved = Repo.insertIfNew(
             parsed,
             source = if (isSms) "SMS" else if (isEmailApp) "Aviso de correo" else "Notificación",
             raw = "[$label] $body",
             time = sbn.postTime.takeIf { it > 0 } ?: System.currentTimeMillis()
-        ) ?: return
+        )
+        if (saved == null) {
+            prefs.addNotifLog("$hhmm · $label · = Repetida (ya estaba guardada)\n$oneLine")
+            return
+        }
+        prefs.addNotifLog("$hhmm · $label · ✓ ${if (saved.updated) "Estado actualizado" else "Guardada"}: ${co.cuadra.app.ui.Wording.headline(saved)}\n$oneLine")
         Announcer.announce(this, saved)
     }
 

@@ -302,4 +302,41 @@ object TxParser {
             status = detectStatus(n),
         )
     }
+
+    // ---------- Más flexible con las apps de bancos (Nequi, Daviplata…) ----------
+
+    private val PROMO = listOf(
+        "gana ", "ganate", "premio", "descuento", "oferta", "promo", "credito", "prestamo", "cashback", "regalo",
+        "invita", "sorteo", "bono", "participa", "conoce", "nuevo en nequi", "actualiza", "tu saldo", "saldo disponible",
+        "meta", "colchon", "bolsillo", "recordatorio", "vence", "cuota"
+    )
+
+    /**
+     * Para notificaciones que vienen DIRECTO de la app de un banco (no SMS ni correo):
+     * si no se entendió pero trae un monto y no es compra/pago/publicidad, se toma como plata que te llegó.
+     * Así no se pierde un pago de Nequi si cambian el texto de su notificación.
+     */
+    fun parseFromBankApp(text: String, bank: String?): ParsedTx? {
+        parse(text, bank)?.let { return it }
+        val n = norm(focus(text))
+        if (containsAny(n, NEVER) || containsAny(n, HARD_EXCLUDE) || containsAny(n, SOFT_PAY) || containsAny(n, PROMO)) return null
+        if (containsAny(n, OUT_WORDS)) return null
+        val amount = parseAmount(text) ?: return null
+        return ParsedTx(
+            amount = amount, direction = Direction.IN, counterparty = findSender(text), bank = bank,
+            last4 = findLast4(text), reference = findReference(text), status = detectStatus(n),
+        )
+    }
+
+    /** Explica en palabras por qué un mensaje se ignoró (para la pantalla de diagnóstico). */
+    fun whyIgnored(text: String): String {
+        val n = norm(focus(text))
+        return when {
+            containsAny(n, NEVER) -> "es un código de seguridad"
+            !containsAny(n, STRONG_IN) && containsAny(n, HARD_EXCLUDE) -> "es compra, PSE, retiro o recarga"
+            parseAmount(text) == null -> "no trae un monto en pesos"
+            containsAny(n, PROMO) -> "parece publicidad o aviso de la app"
+            else -> "no dice que te llegó ni que enviaste plata"
+        }
+    }
 }

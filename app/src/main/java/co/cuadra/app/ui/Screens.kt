@@ -282,6 +282,67 @@ fun DayCloseCard(txs: List<Tx>) {
     }
 }
 
+/** Muestra qué notificaciones de bancos vio Cybeth y qué hizo con cada una. */
+@Composable
+private fun DiagnosticsSection(resumeTick: Int) {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    var tick by remember { mutableIntStateOf(0) }
+    val log = remember(resumeTick, tick) { prefs.notifLog }
+    val on = remember(resumeTick, tick) { listenerEnabled(ctx) }
+    val conn = remember(resumeTick, tick) { prefs.listenerConnectedAt }
+    val disc = remember(resumeTick, tick) { prefs.listenerDisconnectedAt }
+    var copied by remember { mutableStateOf(false) }
+
+    SectionTitle("Diagnóstico")
+    Panel {
+        val status = when {
+            !on -> "✗ Sin permiso de notificaciones"
+            conn == 0L -> "⚠️ Con permiso, pero el lector aún no se ha conectado. Toca \"Reiniciar lector\"."
+            disc > conn -> "⚠️ El lector se desconectó ${ago(disc)}. Toca \"Reiniciar lector\"."
+            else -> "✓ Lector conectado desde ${whenText(conn)}"
+        }
+        Text(status, color = if (status.startsWith("✓")) Accent else Warn, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            OutlinedButton(onClick = {
+                try {
+                    android.service.notification.NotificationListenerService.requestRebind(
+                        android.content.ComponentName(ctx, co.cuadra.app.service.BankNotificationListener::class.java)
+                    )
+                } catch (_: Exception) { }
+                tick++
+            }) { Text("Reiniciar lector") }
+            OutlinedButton(onClick = { tick++ }) { Text("Actualizar") }
+        }
+        Text(
+            "Últimas notificaciones de bancos que vio Cybeth:",
+            color = TextC, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp)
+        )
+        if (log.isEmpty()) {
+            Text(
+                "Ninguna todavía. Si te llegó plata y aquí no aparece nada, Cybeth no está recibiendo la notificación de Nequi: " +
+                    "revisa el permiso, que las notificaciones de Nequi estén activas, y toca \"Reiniciar lector\".",
+                color = Muted, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        log.forEach { e ->
+            Text(
+                e, color = TextC, fontSize = 11.5.sp, fontFamily = FontFamily.Monospace,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp).clip(RoundedCornerShape(8.dp)).background(Card2).padding(8.dp)
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 10.dp)) {
+            OutlinedButton(onClick = {
+                val text = "Cybeth diagnóstico\n$status\n\n" + log.joinToString("\n\n")
+                val cm = ctx.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("Cybeth diagnóstico", text))
+                copied = true
+            }) { Text(if (copied) "✓ Copiado" else "📋 Copiar diagnóstico") }
+            if (log.isNotEmpty()) TextButton(onClick = { prefs.clearNotifLog(); tick++ }) { Text("Borrar", color = Muted) }
+        }
+    }
+}
+
 /** Ajustes del cierre automático. */
 @Composable
 private fun DayCloseSettings() {
@@ -689,6 +750,8 @@ fun SettingsScreen(
         ForwardSection(prefs, refresh)
 
         DayCloseSettings()
+
+        DiagnosticsSection(resumeTick)
 
         TestParserSection()
 

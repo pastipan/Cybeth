@@ -139,6 +139,28 @@ class Prefs(ctx: Context) {
         get() = p.getString("lastCloseResult", null)
         set(v) = p.edit().putString("lastCloseResult", v).apply()
 
+    // ---------------- Diagnóstico ----------------
+
+    var listenerConnectedAt: Long
+        get() = p.getLong("listenerConnectedAt", 0L)
+        set(v) = p.edit().putLong("listenerConnectedAt", v).apply()
+
+    var listenerDisconnectedAt: Long
+        get() = p.getLong("listenerDisconnectedAt", 0L)
+        set(v) = p.edit().putLong("listenerDisconnectedAt", v).apply()
+
+    /** Últimas 20 notificaciones de bancos que vio Cybeth, con lo que hizo con cada una. */
+    val notifLog: List<String>
+        get() = (p.getString("notifLog", "") ?: "").split("\u0001").filter { it.isNotBlank() }
+
+    @Synchronized
+    fun addNotifLog(entry: String) {
+        val l = (listOf(entry.take(700)) + notifLog).take(20)
+        p.edit().putString("notifLog", l.joinToString("\u0001")).apply()
+    }
+
+    fun clearNotifLog() = p.edit().remove("notifLog").apply()
+
     val emailLinked: Boolean get() = !email.isNullOrBlank() && !emailPassword.isNullOrBlank()
 
     fun unlinkEmail() {

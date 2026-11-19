@@ -222,4 +222,18 @@ class TxLogicTest {
     @Test fun nequiPorCobrarConRecuerda() = st(
         "Le enviaste \$20.000 a 3001234567. Recuerda que la persona tiene 30 días para reclamarla.",
         Direction.OUT, 20000, TxStatus.PENDIENTE_COBRO)
+
+    // ---------------- Flexible con la app de Nequi ----------------
+    @Test fun nequiTextoRaroSinPalabraClave() {
+        // Si Nequi cambia el texto, igual se toma como plata que llegó
+        val p = TxParser.parseFromBankApp("Nequi\nJUAN PEREZ · \$15.000", "Nequi")
+        assertTrue(p != null); assertEquals(15000L, p!!.amount); assertEquals(Direction.IN, p.direction)
+    }
+    @Test fun nequiPublicidadNoCuenta() = assertNull(TxParser.parseFromBankApp("¡Gana hasta \$500.000 invitando a tus amigos a Nequi!", "Nequi"))
+    @Test fun nequiSaldoNoCuenta() = assertNull(TxParser.parseFromBankApp("Tu saldo disponible es \$320.500", "Nequi"))
+    @Test fun nequiCompraSigueIgnorada() = assertNull(TxParser.parseFromBankApp("Compraste \$12.000 en Rappi con tu tarjeta Nequi", "Nequi"))
+    @Test fun explicaPorQueSeIgnora() {
+        assertEquals("es compra, PSE, retiro o recarga", TxParser.whyIgnored("Pago PSE exitoso por \$94.300 a ENEL"))
+        assertEquals("no trae un monto en pesos", TxParser.whyIgnored("Te enviamos tu extracto"))
+    }
 }
