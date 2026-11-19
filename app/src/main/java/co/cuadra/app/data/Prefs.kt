@@ -119,6 +119,26 @@ class Prefs(ctx: Context) {
         get() = p.getBoolean("useBiometric", false)
         set(v) = p.edit().putBoolean("useBiometric", v).apply()
 
+    // ---------------- Cierre del día ----------------
+
+    /** Mandar el cierre solo, todos los días a la hora elegida. */
+    var autoClose: Boolean
+        get() = p.getBoolean("autoClose", true)
+        set(v) = p.edit().putBoolean("autoClose", v).apply()
+
+    /** Hora del cierre automático (0-23). Por defecto 9 de la noche. */
+    var closeHour: Int
+        get() = p.getInt("closeHour", 21)
+        set(v) = p.edit().putInt("closeHour", v).apply()
+
+    var lastCloseAt: Long
+        get() = p.getLong("lastCloseAt", 0L)
+        set(v) = p.edit().putLong("lastCloseAt", v).apply()
+
+    var lastCloseResult: String?
+        get() = p.getString("lastCloseResult", null)
+        set(v) = p.edit().putString("lastCloseResult", v).apply()
+
     val emailLinked: Boolean get() = !email.isNullOrBlank() && !emailPassword.isNullOrBlank()
 
     fun unlinkEmail() {

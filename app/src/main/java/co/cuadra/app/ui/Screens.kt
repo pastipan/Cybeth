@@ -218,6 +218,113 @@ fun LatestCard(t: Tx, onClick: () -> Unit) {
     }
 }
 
+/** "Finalizar día": total del día y botón para mandar el cierre con el archivo de Excel. */
+@Composable
+fun DayCloseCard(txs: List<Tx>) {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    val scope = rememberCoroutineScope()
+    var confirm by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    var lastAt by remember { mutableStateOf(prefs.lastCloseAt) }
+    val r = remember(txs) { DayReport(txs, startOfDay()) }
+
+    SectionTitle("Cierre del día")
+    Panel {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Total entró hoy", color = Muted, fontSize = 12.5.sp)
+                Text("+" + money(r.totalIn), color = Accent, fontWeight = FontWeight.ExtraBold, fontSize = 24.sp)
+                Text("${r.countIn} pagos · enviado -${money(r.totalOut)}", color = Muted, fontSize = 12.sp)
+            }
+            Button(enabled = !busy, onClick = { confirm = true }) { Text(if (busy) "Enviando…" else "Finalizar día") }
+        }
+        val auto = if (prefs.autoClose) "Cierre automático: ${co.cuadra.app.service.DayClose.hourLabel(prefs.closeHour)}" else "Cierre automático apagado"
+        val last = if (lastAt >= startOfDay()) " · ✓ Enviado hoy ${hour(lastAt)}" else ""
+        Text(auto + last, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        msg?.let { Text(it, color = if (it.startsWith("✓")) Accent else Warn, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp)) }
+    }
+
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            containerColor = CardBg,
+            title = { Text("Finalizar día", color = TextC) },
+            text = {
+                Column {
+                    Text(r.dateLabel, color = Muted, fontSize = 13.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Entró: +${money(r.totalIn)} (${r.countIn} pagos)", color = TextC)
+                    Text("Enviado: -${money(r.totalOut)} (${r.countOut})", color = TextC)
+                    Text("En proceso: ${r.count(TxStatus.EN_PROCESO)} · Por cobrar: ${r.count(TxStatus.PENDIENTE_COBRO)} · Rechazadas: ${r.count(TxStatus.RECHAZADA)}", color = Muted, fontSize = 13.sp)
+                    Spacer(Modifier.height(8.dp))
+                    val to = prefs.forwardList.ifEmpty { listOfNotNull(prefs.email) }
+                    Text(
+                        if (to.isEmpty()) "Primero enlaza el Gmail en Ajustes." else "Se enviará a: ${to.joinToString(", ")}\ncon el archivo ${r.fileName} para Excel.",
+                        color = Muted, fontSize = 13.sp
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirm = false; busy = true; msg = null
+                    scope.launch {
+                        val res = co.cuadra.app.service.DayClose.send(ctx)
+                        busy = false
+                        msg = if (res.ok) "✓ ${res.message}" else res.message
+                        lastAt = prefs.lastCloseAt
+                    }
+                }) { Text("Enviar cierre", color = Accent, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { confirm = false }) { Text("Cancelar", color = Muted) } },
+        )
+    }
+}
+
+/** Ajustes del cierre automático. */
+@Composable
+private fun DayCloseSettings() {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    var auto by remember { mutableStateOf(prefs.autoClose) }
+    var hourSel by remember { mutableIntStateOf(prefs.closeHour) }
+    val chipColors = FilterChipDefaults.filterChipColors(
+        containerColor = Card2, labelColor = Muted,
+        selectedContainerColor = TextC, selectedLabelColor = Bg
+    )
+    SectionTitle("Cierre del día")
+    Panel {
+        Text(
+            "Todos los días, a la hora que elijas, Cybeth manda al correo de \"Avisar por correo\" el resumen del día " +
+                "(totales, por cuenta y cada movimiento) con un archivo para abrir en Excel.",
+            color = Muted, fontSize = 13.sp
+        )
+        Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text("Enviar cierre automático", color = TextC, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            Switch(
+                checked = auto,
+                onCheckedChange = { auto = it; prefs.autoClose = it; co.cuadra.app.service.DayClose.schedule(ctx) },
+                colors = SwitchDefaults.colors(checkedTrackColor = Accent, checkedThumbColor = Color.White)
+            )
+        }
+        if (auto) {
+            Text("Hora del cierre", color = Muted, fontSize = 12.5.sp)
+            Row(Modifier.padding(top = 4.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf(17, 18, 19, 20, 21, 22, 23).forEach { h ->
+                    FilterChip(
+                        selected = hourSel == h,
+                        onClick = { hourSel = h; prefs.closeHour = h; co.cuadra.app.service.DayClose.schedule(ctx) },
+                        label = { Text(co.cuadra.app.service.DayClose.hourLabel(h)) },
+                        colors = chipColors
+                    )
+                }
+            }
+        }
+        prefs.lastCloseResult?.let { Text("Último cierre: $it", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
+    }
+}
+
 // ---------------------------------------------------------------- INICIO
 
 @Composable
@@ -318,6 +425,7 @@ fun HomeScreen(
                 }
             }
         }
+        item { DayCloseCard(txs) }
         // Todos los bancos donde ha habido movimientos; los montos son los de hoy
         val byBank = txs.groupBy { it.bank ?: "Otro" }
         if (byBank.isNotEmpty()) {
@@ -579,6 +687,8 @@ fun SettingsScreen(
         EmailSection(prefs, onChanged = { refresh++ })
 
         ForwardSection(prefs, refresh)
+
+        DayCloseSettings()
 
         TestParserSection()
 

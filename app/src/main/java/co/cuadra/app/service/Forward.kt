@@ -67,7 +67,10 @@ object ForwardMail {
         CommandMap.setDefaultCommandMap(mc)
     }
 
-    private fun send(from: String, pass: String, to: List<String>, subject: String, html: String, plain: String) {
+    /** Archivo adjunto: nombre, contenido y tipo (ej. "text/csv"). */
+    class Attachment(val name: String, val bytes: ByteArray, val mime: String)
+
+    fun send(from: String, pass: String, to: List<String>, subject: String, html: String, plain: String, attachment: Attachment? = null) {
         fixMailOnAndroid()
         val host = smtpHost(from)
         val props = Properties().apply {
@@ -94,7 +97,19 @@ object ForwardMail {
             val alt = MimeMultipart("alternative")
             alt.addBodyPart(MimeBodyPart().apply { setText(plain, "UTF-8", "plain") })
             alt.addBodyPart(MimeBodyPart().apply { setText(html, "UTF-8", "html") })
-            setContent(alt)
+            if (attachment == null) {
+                setContent(alt)
+            } else {
+                // Correo + archivo adjunto (el cierre del día para Excel)
+                val mixed = MimeMultipart("mixed")
+                mixed.addBodyPart(MimeBodyPart().apply { setContent(alt) })
+                mixed.addBodyPart(MimeBodyPart().apply {
+                    dataHandler = javax.activation.DataHandler(javax.mail.util.ByteArrayDataSource(attachment.bytes, attachment.mime))
+                    fileName = attachment.name
+                    disposition = javax.mail.Part.ATTACHMENT
+                })
+                setContent(mixed)
+            }
             sentDate = Date()
         }
         Transport.send(msg)
