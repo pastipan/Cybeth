@@ -51,17 +51,40 @@ object Announcer {
         try { tts?.shutdown() } catch (_: Exception) { }
         ready = false
         ttsCreatedAt = System.currentTimeMillis()
+        // Si en 8 segundos la voz no arrancó, sonar el pitido para no perder el aviso
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!ready && synchronized(pending) { pending.isNotEmpty() }) {
+                log(ctx, "🔇 La voz no arrancó a tiempo: sonó el pitido")
+                beep()
+                synchronized(pending) { pending.clear() }
+            }
+        }, 8_000L)
         tts = TextToSpeech(ctx.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val r = tts?.setLanguage(Locale("es", "CO"))
                 if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) tts?.setLanguage(Locale("es"))
+                // Sonar por el volumen de MULTIMEDIA y como aviso de voz
+                tts?.setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                tts?.setOnUtteranceProgressListener(object : android.speech.tts.UtteranceProgressListener() {
+                    override fun onStart(id: String?) {}
+                    override fun onDone(id: String?) { log(ctx, "🔊 Habló bien") }
+                    @Deprecated("") override fun onError(id: String?) { log(ctx, "🔇 La voz falló: sonó el pitido"); beep() }
+                    override fun onError(id: String?, code: Int) { log(ctx, "🔇 La voz falló (código $code): sonó el pitido"); beep() }
+                })
                 ready = true
                 synchronized(pending) {
                     pending.forEach { speakNow(ctx, it) }
                     pending.clear()
                 }
             } else {
-                // Falló: se intentará de nuevo en el próximo aviso
+                // Falló: pitido para que igual se entere, y se intentará de nuevo en el próximo aviso
+                log(ctx, "🔇 El motor de voz no arrancó (estado $status): sonó el pitido")
+                beep()
                 tts = null
                 ready = false
             }
@@ -81,7 +104,28 @@ object Announcer {
         }
     }
 
+    private fun log(ctx: Context, msg: String) {
+        try {
+            val h = java.text.SimpleDateFormat("h:mm a", Locale("es", "CO")).format(java.util.Date())
+            Prefs(ctx).addNotifLog("$h · Voz · $msg")
+        } catch (_: Exception) { }
+    }
+
+    /** Pitido de respaldo (dos tonos) por si la voz de Android no funciona. */
+    fun beep() {
+        try {
+            val tg = android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 100)
+            tg.startTone(android.media.ToneGenerator.TONE_PROP_ACK, 600)
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tg.release() }, 1000)
+        } catch (_: Exception) { }
+    }
+
     fun speak(ctx: Context, text: String) {
+        // Si el volumen multimedia está en 0, la voz "habla" pero no se oye: avisarlo en el diagnóstico
+        try {
+            val am = ctx.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            if (am.getStreamVolume(android.media.AudioManager.STREAM_MUSIC) == 0) log(ctx, "⚠️ El volumen MULTIMEDIA está en 0: súbelo para oír la voz")
+        } catch (_: Exception) { }
         ensureTts(ctx)
         if (ready) speakNow(ctx, text) else synchronized(pending) { pending += text }
     }
@@ -91,7 +135,7 @@ object Announcer {
         // Ej: "Cristian Rosero te envió 35000 pesos. Entró a Nequi."
         val spoken = Wording.headline(t, spoken = true) + ". " + Wording.accountLine(t).substringBefore(" ****") + "."
         val wantVoice = if (t.direction == Direction.IN) prefs.voiceIn else prefs.voiceOut
-        if (wantVoice) speak(ctx, spoken)
+        if (wantVoice) speak(ctx, spoken) else log(ctx, "🔇 No habló porque la voz está apagada en Ajustes → Avisos")
         if (prefs.notify) notify(ctx, t)
         // Aviso por correo (por ejemplo a la jefe, que tiene iPhone)
         ForwardMail.enqueue(ctx, t)
