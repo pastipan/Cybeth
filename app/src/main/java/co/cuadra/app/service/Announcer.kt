@@ -42,31 +42,48 @@ object Announcer {
         }
     }
 
+    private var ttsCreatedAt = 0L
+
+    /** Crea la voz. Si Android la apagó o falló al iniciar, se vuelve a crear sola. */
     private fun ensureTts(ctx: Context) {
-        if (tts != null) return
+        val stuck = tts != null && !ready && System.currentTimeMillis() - ttsCreatedAt > 10_000L
+        if (tts != null && !stuck) return
+        try { tts?.shutdown() } catch (_: Exception) { }
+        ready = false
+        ttsCreatedAt = System.currentTimeMillis()
         tts = TextToSpeech(ctx.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                val co = Locale("es", "CO")
-                val r = tts?.setLanguage(co)
-                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    tts?.setLanguage(Locale("es"))
-                }
+                val r = tts?.setLanguage(Locale("es", "CO"))
+                if (r == TextToSpeech.LANG_MISSING_DATA || r == TextToSpeech.LANG_NOT_SUPPORTED) tts?.setLanguage(Locale("es"))
                 ready = true
                 synchronized(pending) {
-                    pending.forEach { speakNow(it) }
+                    pending.forEach { speakNow(ctx, it) }
                     pending.clear()
                 }
+            } else {
+                // Falló: se intentará de nuevo en el próximo aviso
+                tts = null
+                ready = false
             }
         }
     }
 
-    private fun speakNow(text: String) {
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "cuadra-${System.nanoTime()}")
+    private fun speakNow(ctx: Context, text: String) {
+        val r = try {
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "cuadra-${System.nanoTime()}") ?: TextToSpeech.ERROR
+        } catch (_: Exception) { TextToSpeech.ERROR }
+        if (r == TextToSpeech.ERROR) {
+            // El motor de voz se murió (pasa cuando Android cierra procesos): reiniciarlo y repetir
+            try { tts?.shutdown() } catch (_: Exception) { }
+            tts = null; ready = false
+            synchronized(pending) { pending += text }
+            ensureTts(ctx)
+        }
     }
 
     fun speak(ctx: Context, text: String) {
         ensureTts(ctx)
-        if (ready) speakNow(text) else synchronized(pending) { pending += text }
+        if (ready) speakNow(ctx, text) else synchronized(pending) { pending += text }
     }
 
     fun announce(ctx: Context, t: Tx) {

@@ -65,7 +65,7 @@ class TxLogicTest {
     @Test fun pagoQr() = ignored("Hiciste un pago con QR por \$12.000 en Tienda D1")
     @Test fun compraTarjeta() = ignored("Compra aprobada por \$67.800 en EXITO con tu tarjeta Nequi")
     @Test fun pse() = ignored("Pago PSE exitoso por \$94.300 a ENEL")
-    @Test fun recarga() = ignored("Recargaste \$50.000 a tu Nequi desde Bancolombia")
+    @Test fun recarga() = st("Recargaste \$50.000 a tu Nequi desde Bancolombia", Direction.IN, 50000, TxStatus.APROBADA, "Recarga")
     @Test fun sacaste() = ignored("Sacaste \$100.000 en cajero")
     @Test fun retiro() = ignored("Retiraste \$50.000 en cajero")
     @Test fun factura() = ignored("Pagaste la factura de Claro por \$45.000")
@@ -263,4 +263,8 @@ class TxLogicTest {
         // El mismo pago avisado también por SMS: sigue siendo uno solo
         assertTrue(Dedup.isDuplicate(listOf(a), p, "SMS", "[Mensajes] Nequi: CRISTIAN GUANCHA te envió 1000", 1_030_000, sameTextIsRepeat = false))
     }
+
+    @Test fun recargaPseNequiReal() = st("Recarga PSE\n¡Tu recarga de \$32.000 fue un éxito!", Direction.IN, 32000, TxStatus.APROBADA, "Recarga PSE")
+    @Test fun recargaCelularNoCuenta() = ignored("Recarga de celular Claro por \$10.000 exitosa")
+    @Test fun pagoPseSigueIgnorado() = ignored("Pagaste \$94.300 por PSE a ENEL")
 }

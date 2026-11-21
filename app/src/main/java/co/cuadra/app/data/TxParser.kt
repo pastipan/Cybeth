@@ -293,6 +293,19 @@ object TxParser {
         val n = norm(text)
 
         if (containsAny(n, NEVER)) return null
+
+        // Recargas a Nequi (por PSE o desde otro banco): es plata que ENTRA, cuenta como entrada
+        if ((n.contains("recarga") || n.contains("recargaste")) &&
+            !containsAny(n, listOf("pagaste", "compra", "celular", "minutos", "paquete", "datos", "operador", "claro", "tigo", "movistar", "wom"))
+        ) {
+            val amt = parseAmount(text) ?: return null
+            return ParsedTx(
+                amount = amt, direction = Direction.IN,
+                counterparty = if (n.contains("pse")) "Recarga PSE" else "Recarga",
+                bank = bankHint ?: detectBank(text) ?: bankFromAll,
+                last4 = findLast4(text), reference = findReference(text), status = detectStatus(n),
+            )
+        }
         val strongIn = containsAny(n, STRONG_IN)
         // Compras, PSE, retiros, etc. se ignoran, salvo que sea plata que TE pagaron (QR, tarjeta, Nequi…)
         if (!strongIn && containsAny(n, HARD_EXCLUDE)) return null
