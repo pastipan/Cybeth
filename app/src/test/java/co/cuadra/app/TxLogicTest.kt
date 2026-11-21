@@ -267,4 +267,11 @@ class TxLogicTest {
     @Test fun recargaPseNequiReal() = st("Recarga PSE\n¡Tu recarga de \$32.000 fue un éxito!", Direction.IN, 32000, TxStatus.APROBADA, "Recarga PSE")
     @Test fun recargaCelularNoCuenta() = ignored("Recarga de celular Claro por \$10.000 exitosa")
     @Test fun pagoPseSigueIgnorado() = ignored("Pagaste \$94.300 por PSE a ENEL")
+
+    @Test fun nequiEnvioSinMonto() {
+        val p = TxParser.parseFromBankApp("Tu plata llegó con éxito 💜\nEnvío exitoso, la plata ya está en el Nequi destino.✈ Recuerda que no se puede cancelar. Avísale a tu amigo que ya le llegó. ✨", "Nequi")!!
+        assertEquals(Direction.OUT, p.direction); assertEquals(0L, p.amount)
+    }
+    @Test fun nequiBreBTeEnviaron() = st("Te enviaron plata por Bre-B\nTe enviaron \$13.000. Entra a tu app y revisa tu saldo.", Direction.IN, 13000, TxStatus.APROBADA)
+    @Test fun daviplataAbiertoNoEsPago() = assertNull(TxParser.parseFromBankApp("DaviPlata\nSu DaviPlata sigue abierto", "Daviplata"))
 }

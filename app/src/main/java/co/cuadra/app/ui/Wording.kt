@@ -12,7 +12,8 @@ import co.cuadra.app.data.TxStatus
  */
 object Wording {
 
-    private fun amt(t: Tx, spoken: Boolean) = if (spoken) "${t.amount} pesos" else money(t.amount)
+    private fun amt(t: Tx, spoken: Boolean) =
+        if (t.amount == 0L) "plata (el banco no dijo cuánto)" else if (spoken) "${t.amount} pesos" else money(t.amount)
 
     /** Frase principal. */
     fun headline(t: Tx, spoken: Boolean = false): String {

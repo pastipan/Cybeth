@@ -347,6 +347,13 @@ object TxParser {
     fun parseFromBankApp(text: String, bank: String?): ParsedTx? {
         parse(text, bank)?.let { return it }
         val n = norm(focus(text))
+        // Nequi confirma los envíos SIN decir el monto: "Tu plata llegó con éxito · Envío exitoso,
+        // la plata ya está en el Nequi destino". Se guarda como envío con monto no informado.
+        if (parseAmount(text) == null &&
+            containsAny(n, listOf("envio exitoso", "tu plata llego", "plata ya esta en", "ya le llego"))
+        ) {
+            return ParsedTx(amount = 0, direction = Direction.OUT, counterparty = null, bank = bank, last4 = null, reference = null)
+        }
         if (containsAny(n, NEVER) || containsAny(n, HARD_EXCLUDE) || containsAny(n, SOFT_PAY) || containsAny(n, PROMO)) return null
         if (containsAny(n, OUT_WORDS)) return null
         val amount = parseAmount(text) ?: return null
