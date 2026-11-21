@@ -13,6 +13,7 @@ class CuadraApp : Application() {
         super.onCreate()
         Repo.init(this)
         Announcer.init(this)
+        Announcer.warmUp(this)
         if (Prefs(this).emailLinked) MailWorker.schedule(this)
         DayClose.schedule(this, replace = false)
         Watchdog.rebind(this)

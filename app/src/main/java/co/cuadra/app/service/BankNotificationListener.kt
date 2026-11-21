@@ -27,6 +27,7 @@ class BankNotificationListener : NotificationListenerService() {
     override fun onListenerConnected() {
         Repo.init(applicationContext)
         Prefs(this).listenerConnectedAt = System.currentTimeMillis()
+        Announcer.warmUp(this)
         // Revisar las notificaciones que ya están en la barra (ej. pagos que llegaron mientras
         // Cybeth estaba apagada o antes de actualizar). Las repetidas no se guardan dos veces.
         try {
@@ -151,7 +152,7 @@ class BankNotificationListener : NotificationListenerService() {
         if (now - lastMailCheck < 8_000) return
         lastMailCheck = now
         scope.launch {
-            delay(2_000) // darle un momento a Gmail para que el correo ya esté en el servidor
+            delay(800) // darle un momento a Gmail para que el correo ya esté en el servidor
             MailChecker.check(applicationContext)
         }
     }

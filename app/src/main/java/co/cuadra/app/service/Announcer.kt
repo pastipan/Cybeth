@@ -54,11 +54,11 @@ object Announcer {
         // Si en 8 segundos la voz no arrancó, sonar el pitido para no perder el aviso
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             if (!ready && synchronized(pending) { pending.isNotEmpty() }) {
-                log(ctx, "🔇 La voz no arrancó a tiempo: sonó el pitido")
+                log(ctx, "🔇 La voz no arrancó en 2,5 s: sonó el pitido")
                 beep()
                 synchronized(pending) { pending.clear() }
             }
-        }, 8_000L)
+        }, 2_500L)
         tts = TextToSpeech(ctx.applicationContext) { status ->
             if (status == TextToSpeech.SUCCESS) {
                 val r = tts?.setLanguage(Locale("es", "CO"))
@@ -104,6 +104,14 @@ object Announcer {
         }
     }
 
+    /**
+     * Dejar la voz lista desde que arranca Cybeth, para que cuando entre plata hable
+     * de inmediato (sin esperar a que el motor de voz se cargue).
+     */
+    fun warmUp(ctx: Context) {
+        try { ensureTts(ctx) } catch (_: Exception) { }
+    }
+
     private fun log(ctx: Context, msg: String) {
         try {
             val h = java.text.SimpleDateFormat("h:mm a", Locale("es", "CO")).format(java.util.Date())
@@ -134,11 +142,12 @@ object Announcer {
         val prefs = Prefs(ctx)
         // Ej: "Cristian Rosero te envió 35000 pesos. Entró a Nequi."
         val spoken = Wording.headline(t, spoken = true) + ". " + Wording.accountLine(t).substringBefore(" ****") + "."
+        // 1) El correo a la jefe sale PRIMERO (en paralelo, no espera a la voz)
+        ForwardMail.enqueue(ctx, t)
+        // 2) Notificación y voz al instante
+        if (prefs.notify) notify(ctx, t)
         val wantVoice = if (t.direction == Direction.IN) prefs.voiceIn else prefs.voiceOut
         if (wantVoice) speak(ctx, spoken) else log(ctx, "🔇 No habló porque la voz está apagada en Ajustes → Avisos")
-        if (prefs.notify) notify(ctx, t)
-        // Aviso por correo (por ejemplo a la jefe, que tiene iPhone)
-        ForwardMail.enqueue(ctx, t)
     }
 
     /**
