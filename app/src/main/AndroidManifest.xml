@@ -35,6 +35,9 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+        <!-- Respuesta "Escribir monto" desde la notificación -->
+        <receiver android:name=".service.AmountReplyReceiver" android:exported="false" />
+
         <!-- Al prender el celular o al actualizar Cybeth: reconectar el lector -->
         <receiver
             android:name=".service.StartReceiver"

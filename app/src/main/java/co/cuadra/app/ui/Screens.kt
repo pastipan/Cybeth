@@ -446,6 +446,14 @@ fun HomeScreen(
                 "Reconectar"
             ) { co.cuadra.app.service.Watchdog.rebind(ctx); openListenerSettings(ctx) }
         }
+        val sinMonto = txs.filter { it.amount == 0L }
+        if (sinMonto.isNotEmpty()) item {
+            Warning(
+                "Tienes ${sinMonto.size} envío${if (sinMonto.size == 1) "" else "s"} sin monto",
+                "Nequi no dijo cuánto enviaste. Escribe el monto para que cuente en el total y se envíe el aviso.",
+                "Escribir monto"
+            ) { onOpen(sinMonto.first()) }
+        }
         if (!emailOn) item {
             Warning("Enlaza tu correo (opcional)", "Así también se leen los correos que mandan los bancos.", "Enlazar correo", onSettings)
         }
@@ -643,6 +651,32 @@ fun TxScreen(
     }
 }
 
+/** Escribir o corregir el monto (para envíos de Nequi que no dicen cuánto). */
+@Composable
+private fun AmountEditor(t: Tx) {
+    val ctx = LocalContext.current
+    var editing by remember(t.id) { mutableStateOf(t.amount == 0L) }
+    var text by remember(t.id) { mutableStateOf(if (t.amount == 0L) "" else t.amount.toString()) }
+    var msg by remember(t.id) { mutableStateOf<String?>(null) }
+    if (!editing) {
+        TextButton(onClick = { editing = true }) { Text("✏️ Corregir monto", color = Accent) }
+        return
+    }
+    Column(Modifier.fillMaxWidth().padding(bottom = 10.dp).clip(RoundedCornerShape(12.dp)).background(Card2).padding(10.dp)) {
+        if (t.amount == 0L) Text("El banco no dijo el monto. Escríbelo para registrarlo y enviar el aviso:", color = Warn, fontSize = 13.sp)
+        OutlinedTextField(
+            value = text, onValueChange = { text = it }, singleLine = true, label = { Text("Monto en pesos") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+        )
+        Button(onClick = {
+            val v = co.cuadra.app.service.AmountAsk.parseTyped(text)
+            if (v == null) msg = "Escribe un número, ej. 50000"
+            else { co.cuadra.app.service.AmountAsk.confirm(ctx, t.id, v); msg = "✓ Guardado ${money(v)}"; editing = false }
+        }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Guardar monto") }
+        msg?.let { Text(it, color = if (it.startsWith("✓")) Accent else Warn, fontSize = 13.sp) }
+    }
+}
+
 @Composable
 fun TxDetailDialog(t: Tx, onClose: () -> Unit, onDelete: () -> Unit) {
     val out = t.direction == Direction.OUT
@@ -654,6 +688,7 @@ fun TxDetailDialog(t: Tx, onClose: () -> Unit, onDelete: () -> Unit) {
         },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
+                AmountEditor(t)
                 Text(Wording.headline(t), color = TextC, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Spacer(Modifier.height(6.dp))
                 StatusPill(t, big = true)

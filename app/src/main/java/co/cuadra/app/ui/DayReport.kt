@@ -45,6 +45,8 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
     val fileDate: String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(dayStart))
     val fileName: String = "Cybeth_cierre_$fileDate.csv"
 
+    val missingAmount: Int = txs.count { it.amount == 0L }
+
     fun subject(): String = "📊 Cierre del día $fileDate · Entró ${money(totalIn)} ($countIn pagos)"
 
     private fun signed(n: Long) = (if (n < 0) "-" else "+") + money(kotlin.math.abs(n))
@@ -57,6 +59,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
         appendLine("Entró (aprobado): ${money(totalIn)} en $countIn pagos")
         appendLine("Enviado (aprobado): ${money(totalOut)} en $countOut envíos")
         appendLine("Neto: ${signed(net)}")
+        if (missingAmount > 0) appendLine("⚠️ $missingAmount envío(s) sin monto: el neto puede no ser exacto")
         appendLine("En proceso: ${count(TxStatus.EN_PROCESO)} (${money(sum(TxStatus.EN_PROCESO))})")
         appendLine("Pendientes por cobrar: ${count(TxStatus.PENDIENTE_COBRO)} (${money(sum(TxStatus.PENDIENTE_COBRO))})")
         appendLine("Rechazadas: ${count(TxStatus.RECHAZADA)} (${money(sum(TxStatus.RECHAZADA))})")
@@ -116,6 +119,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
       <div style="color:#6b7690;font-size:13px;margin-top:10px">Entró hoy (aprobado)</div>
       <div style="font-size:34px;font-weight:800;color:#0FB5A3">+${money(totalIn)}</div>
       <div style="color:#6b7690;font-size:13px;margin-bottom:14px">$countIn pagos · Enviado -${money(totalOut)} · Neto ${signed(net)}</div>
+      ${if (missingAmount > 0) "<div style=\"margin:-6px 0 14px;padding:8px 10px;background:#FFF4E0;border-radius:8px;color:#8a5a00;font-size:13px\">⚠️ $missingAmount envío(s) sin monto: el neto puede no ser exacto</div>" else ""}
       <table style="width:100%;border-collapse:separate;border-spacing:6px 0;margin:0 -6px 16px"><tr>
         ${stat("Entraron", "$countIn", "#0FB5A3")}
         ${stat("En proceso", "${count(TxStatus.EN_PROCESO)}", "#E59A12")}

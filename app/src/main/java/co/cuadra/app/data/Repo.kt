@@ -83,6 +83,13 @@ object Repo {
     }
 
     @Synchronized
+    fun updateAmount(id: Long, amount: Long): Tx? {
+        db.writableDatabase.update("tx", ContentValues().apply { put("amount", amount) }, "id=?", arrayOf(id.toString()))
+        reload()
+        return _txs.value.firstOrNull { it.id == id }
+    }
+
+    @Synchronized
     fun delete(id: Long) {
         db.writableDatabase.delete("tx", "id=?", arrayOf(id.toString()))
         reload()

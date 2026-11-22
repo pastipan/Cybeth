@@ -142,8 +142,9 @@ object Announcer {
         val prefs = Prefs(ctx)
         // Ej: "Cristian Rosero te envió 35000 pesos. Entró a Nequi."
         val spoken = Wording.headline(t, spoken = true) + ". " + Wording.accountLine(t).substringBefore(" ****") + "."
-        // 1) El correo a la jefe sale PRIMERO (en paralelo, no espera a la voz)
-        ForwardMail.enqueue(ctx, t)
+        // 1) El correo a la jefe sale PRIMERO (en paralelo, no espera a la voz).
+        //    Si el banco no dijo el monto (envíos de Nequi), primero se pregunta y el correo sale al confirmarlo.
+        if (t.amount == 0L) AmountAsk.ask(ctx, t) else ForwardMail.enqueue(ctx, t)
         // 2) Notificación y voz al instante
         if (prefs.notify) notify(ctx, t)
         val wantVoice = if (t.direction == Direction.IN) prefs.voiceIn else prefs.voiceOut
