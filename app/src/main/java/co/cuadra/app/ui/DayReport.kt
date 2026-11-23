@@ -12,8 +12,15 @@ import java.util.Locale
  * Sale como texto, como correo bonito (HTML) y como archivo para Excel (CSV).
  * (Sin nada de Android, para poder probarlo.)
  */
-class DayReport(all: List<Tx>, val dayStart: Long) {
-    private val dayEnd = dayStart + 24 * 60 * 60 * 1000L
+/**
+ * @param dayStart inicio (00:00 del primer día)
+ * @param dayEnd   fin (00:00 del día siguiente al último). Por defecto, un solo día.
+ * @param periodName nombre del periodo, ej. "Esta semana" (null = un día)
+ */
+class DayReport(all: List<Tx>, val dayStart: Long, val dayEnd: Long = dayStart + 24 * 60 * 60 * 1000L, val periodName: String? = null) {
+    /** ¿Abarca más de un día? Entonces cada movimiento muestra la fecha además de la hora. */
+    val multiDay: Boolean = dayEnd - dayStart > 26 * 60 * 60 * 1000L
+    private fun tm(t: Long): String = if (multiDay) SimpleDateFormat("d MMM h:mm a", Locale("es", "CO")).format(Date(t)) else hour(t)
     val txs: List<Tx> = all.filter { it.time in dayStart until dayEnd }.sortedBy { it.time }
 
     private val okIn = txs.filter { it.direction == Direction.IN && it.status == TxStatus.APROBADA }
@@ -40,21 +47,27 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
         }
         .sortedByDescending { it.totalIn }
 
-    val dateLabel: String = SimpleDateFormat("EEEE d 'de' MMMM 'de' yyyy", Locale("es", "CO"))
+    val dateLabel: String = if (multiDay) {
+        val f = SimpleDateFormat("d 'de' MMMM yyyy", Locale("es", "CO"))
+        (periodName?.let { "$it: " } ?: "") + "del " + f.format(Date(dayStart)) + " al " + f.format(Date(dayEnd - 1))
+    } else SimpleDateFormat("EEEE d 'de' MMMM 'de' yyyy", Locale("es", "CO"))
         .format(Date(dayStart)).replaceFirstChar { it.uppercase() }
-    val fileDate: String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(dayStart))
+    val fileDate: String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(dayStart)) +
+        (if (multiDay) "_a_" + SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(dayEnd - 1)) else "")
+    /** "Cierre del día" o "Cierre del periodo" */
+    val kind: String = if (multiDay) "Cierre del periodo" else "Cierre del día"
     val fileName: String = "Cybeth_cierre_$fileDate.xlsx"
 
     val missingAmount: Int = txs.count { it.amount == 0L }
 
-    fun subject(): String = "📊 Cierre del día $fileDate · Entró ${money(totalIn)} ($countIn pagos)"
+    fun subject(): String = "📊 $kind $fileDate · Entró ${money(totalIn)} ($countIn pagos)"
 
     private fun signed(n: Long) = (if (n < 0) "-" else "+") + money(kotlin.math.abs(n))
 
     // ---------------------------------------------------------------- texto
 
     fun plain(): String = buildString {
-        appendLine("CIERRE DEL DÍA · $dateLabel")
+        appendLine("${kind.uppercase()} · $dateLabel")
         appendLine()
         appendLine("Entró (aprobado): ${money(totalIn)} en $countIn pagos")
         appendLine("Enviado (aprobado): ${money(totalOut)} en $countOut envíos")
@@ -71,7 +84,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
         appendLine("MOVIMIENTOS")
         if (txs.isEmpty()) appendLine("Sin movimientos.")
         txs.forEach {
-            appendLine("${hour(it.time)} · ${Wording.headline(it)} · ${Wording.accountLine(it)} · ${Wording.statusName(it.status)}")
+            appendLine("${tm(it.time)} · ${Wording.headline(it)} · ${Wording.accountLine(it)} · ${Wording.statusName(it.status)}")
         }
         appendLine()
         appendLine("Va adjunto el archivo $fileName para abrir en Excel.")
@@ -90,7 +103,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
     }
 
     private fun card(label: String, value: String, color: String, sub: String) =
-        """<td width="25%" style="padding:4px"><div style="background:#F6F8FA;border-radius:12px;padding:12px 6px;text-align:center">
+        """<td width="25%" style="padding:4px"><div style="background:#FFFFFF;border:1px solid #E3E7EE;border-top:4px solid $color;border-radius:12px;padding:12px 6px;text-align:center">
 <div style="font-size:20px;font-weight:800;color:$color">${esc(value)}</div>
 <div style="font-size:11px;color:#6B7690;margin-top:2px">${esc(label)}</div>
 <div style="font-size:11px;color:#9AA3B5">${esc(sub)}</div></div></td>"""
@@ -99,7 +112,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
      * Correo del cierre. [logoSrc]: "cid:logo" cuando el logo va adjunto adentro del correo.
      */
     fun html(logoSrc: String? = null): String {
-        val th = "padding:8px 6px;background:#EAF7F5;color:#14213D;font-size:12px;font-weight:700;border-bottom:1px solid #DDE2EA"
+        val th = "padding:9px 6px;background:#14213D;color:#FFFFFF;font-size:12px;font-weight:700"
         val td = "padding:8px 6px;border-bottom:1px solid #EEF1F5;font-size:13px;color:#14213D;vertical-align:top"
         val accRows = if (byAccount.isEmpty()) "<tr><td colspan=\"3\" style=\"$td;color:#6B7690\">Sin movimientos</td></tr>"
         else byAccount.joinToString("") {
@@ -111,27 +124,29 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
         else txs.joinToString("") {
             val strike = if (it.status == TxStatus.RECHAZADA) "text-decoration:line-through;" else ""
             val amount = if (it.amount == 0L) "sin monto" else (if (it.direction == Direction.IN) "+" else "-") + money(it.amount)
-            "<tr><td style=\"$td;color:#6B7690;white-space:nowrap\">${hour(it.time)}</td>" +
+            "<tr><td style=\"$td;color:#6B7690;white-space:nowrap\">${tm(it.time)}</td>" +
                 "<td style=\"$td\"><b>${esc(it.counterparty ?: if (it.direction == Direction.IN) "Recibida" else "Enviada")}</b>" +
                 "<div style=\"font-size:11px;color:#6B7690\">${esc(Wording.accountLine(it))}</div></td>" +
                 "<td style=\"$td;text-align:center\"><span style=\"display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:700;color:${statusColor(it)};background:#F6F8FA\">${esc(Wording.statusName(it.status))}</span></td>" +
                 "<td style=\"$td;text-align:right;font-weight:800;white-space:nowrap;color:${statusColor(it)};$strike\">$amount</td></tr>"
         }
-        val logo = if (logoSrc != null) "<img src=\"$logoSrc\" width=\"44\" height=\"44\" alt=\"cybeth\" style=\"display:block;border-radius:10px\">" else ""
+        val logo = if (logoSrc != null) "<img src=\"$logoSrc\" width=\"52\" height=\"52\" alt=\"cybeth\" style=\"display:block;border-radius:10px\">" else ""
         val warn = if (missingAmount > 0) "<div style=\"margin:0 0 14px;padding:10px 12px;background:#FFF4E0;border-radius:10px;color:#8A5A00;font-size:13px\">⚠️ $missingAmount envío(s) sin monto: el neto puede no ser exacto.</div>" else ""
         return """
 <div style="font-family:Arial,Helvetica,sans-serif;background:#F2F4F7;padding:20px 10px">
  <div style="max-width:600px;margin:0 auto;background:#FFFFFF;border-radius:18px;overflow:hidden;border:1px solid #E3E7EE">
-  <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:4px solid #0FB5A3"><tr>
-   <td style="padding:16px 18px;width:52px">$logo</td>
-   <td style="padding:16px 0"><div style="font-size:26px;font-weight:800;color:#14213D;letter-spacing:-0.5px">cybeth</div>
-     <div style="font-size:13px;color:#6B7690">Cierre del día</div></td>
-   <td style="padding:16px 18px;text-align:right;font-size:13px;color:#6B7690">${esc(dateLabel)}</td>
-  </tr></table>
+  <div style="background:#0FB5A3;background-image:linear-gradient(135deg,#0FB5A3 0%,#0B8F80 60%,#14213D 100%);padding:22px 20px 20px">
+   <table width="100%" cellpadding="0" cellspacing="0"><tr>
+    <td style="width:64px"><div style="background:#FFFFFF;border-radius:14px;padding:5px;width:52px;height:52px">$logo</div></td>
+    <td style="padding-left:12px"><div style="font-size:32px;font-weight:800;color:#FFFFFF;letter-spacing:-0.5px;line-height:1">cybeth</div>
+      <div style="font-size:13px;color:#D9F5F1;margin-top:4px">$kind</div></td>
+   </tr></table>
+   <div style="margin-top:16px;font-size:13px;color:#D9F5F1">${esc(dateLabel)}</div>
+   <div style="font-size:13px;color:#FFFFFF;margin-top:10px">${if (multiDay) "Total que entró en el periodo" else "Total que entró hoy"}</div>
+   <div style="font-size:42px;font-weight:800;color:#FFFFFF;line-height:1.1">+${money(totalIn)}</div>
+   <div style="font-size:13px;color:#D9F5F1">$countIn pagos recibidos</div>
+  </div>
   <div style="padding:20px 18px">
-   <div style="font-size:13px;color:#6B7690">Total que entró (aprobado)</div>
-   <div style="font-size:38px;font-weight:800;color:#0FB5A3;line-height:1.1">+${money(totalIn)}</div>
-   <div style="font-size:13px;color:#6B7690;margin:4px 0 16px">$countIn pagos recibidos</div>
    <table width="100%" cellpadding="0" cellspacing="0" style="margin:0 -4px 16px"><tr>
     ${card("Entró", money(totalIn), "#0B8F80", "$countIn pagos")}
     ${card("Enviado", money(totalOut), "#C0392B", "$countOut envíos")}
@@ -139,19 +154,19 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
     ${card("Pendientes", "${count(TxStatus.EN_PROCESO) + count(TxStatus.PENDIENTE_COBRO)}", "#B7791F", "${count(TxStatus.RECHAZADA)} rechazadas")}
    </tr></table>
    $warn
-   <div style="font-size:15px;font-weight:800;color:#14213D;margin:6px 0 8px">🏦 Por cuenta</div>
+   <div style="font-size:16px;font-weight:800;color:#0B8F80;margin:6px 0 8px;border-left:4px solid #0FB5A3;padding-left:8px">Por cuenta</div>
    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
     <tr><th align="left" style="$th">Cuenta</th><th align="right" style="$th">Entró</th><th align="right" style="$th">Enviado</th></tr>
     $accRows
    </table>
-   <div style="font-size:15px;font-weight:800;color:#14213D;margin:20px 0 8px">📋 Movimientos (${txs.size})</div>
+   <div style="font-size:16px;font-weight:800;color:#0B8F80;margin:22px 0 8px;border-left:4px solid #0FB5A3;padding-left:8px">Movimientos (${txs.size})</div>
    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse">
     <tr><th align="left" style="$th">Hora</th><th align="left" style="$th">Persona y cuenta</th><th style="$th">Estado</th><th align="right" style="$th">Monto</th></tr>
     $txRows
    </table>
    <div style="margin-top:18px;padding:10px 12px;background:#EAF7F5;border-radius:10px;color:#0B6E63;font-size:12px">📎 Va adjunto <b>${esc(fileName)}</b> con todo el detalle para Excel.</div>
   </div>
-  <div style="padding:12px 18px;color:#9AA3B5;font-size:11px;border-top:1px solid #EEF1F5">Cierre automático de <b style="color:#0FB5A3">cybeth</b> SG</div>
+  <div style="padding:14px 18px;background:#14213D;color:#9FB0C8;font-size:12px;text-align:center"><b style="color:#0FB5A3;font-size:14px">cybeth</b> SG · Cierre automático</div>
  </div>
 </div>""".trimIndent()
     }
@@ -159,7 +174,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
     // ---------------------------------------------------------------- WhatsApp
 
     fun whatsapp(): String = buildString {
-        appendLine("*cybeth · Cierre del día*")
+        appendLine("*cybeth · $kind*")
         appendLine("_${dateLabel}_")
         appendLine()
         appendLine("💰 *Entró:* ${money(totalIn)}  ($countIn pagos)")
@@ -180,7 +195,7 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
                 TxStatus.APROBADA -> if (it.direction == Direction.IN) "✅" else "↗️"
                 TxStatus.EN_PROCESO -> "⏳"; TxStatus.PENDIENTE_COBRO -> "🕓"; TxStatus.RECHAZADA -> "❌"
             }
-            appendLine("$icon ${hour(it.time)} · ${it.counterparty ?: "—"} · ${it.bank ?: ""} · *$amount*")
+            appendLine("$icon ${tm(it.time)} · ${it.counterparty ?: "—"} · ${it.bank ?: ""} · *$amount*")
         }
         appendLine()
         append("_Enviado por cybeth SG_")
@@ -194,11 +209,11 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
         // Encabezado con logo (columna A) y nombre
         x.height(0, 30.0); x.height(1, 20.0); x.height(2, 18.0)
         x.text(0, 1, "cybeth", Xlsx.S_TITLE)
-        x.text(1, 1, "Cierre del día · $dateLabel", Xlsx.S_SUB)
+        x.text(1, 1, "$kind · $dateLabel", Xlsx.S_SUB)
         x.text(2, 1, "Generado por cybeth SG", Xlsx.S_SUB)
 
         var r = 4
-        x.text(r, 0, "RESUMEN DEL DÍA", Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 22.0); r++
+        x.text(r, 0, if (multiDay) "RESUMEN DEL PERIODO" else "RESUMEN DEL DÍA", Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 22.0); r++
         x.text(r, 0, "Concepto", Xlsx.S_TH); x.text(r, 1, "Valor", Xlsx.S_TH); x.text(r, 2, "Cantidad", Xlsx.S_TH); r++
         fun line(label: String, v: Long, n: Int) {
             x.text(r, 0, label, Xlsx.S_TD); x.num(r, 1, v, Xlsx.S_TD_MONEY); x.num(r, 2, n, Xlsx.S_TD_NUM); r++
@@ -222,10 +237,10 @@ class DayReport(all: List<Tx>, val dayStart: Long) {
 
         r++
         x.text(r, 0, "MOVIMIENTOS (${txs.size})", Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 22.0); r++
-        listOf("Hora", "Persona", "Cuenta", "Estado", "Monto", "Detectado por").forEachIndexed { i, h -> x.text(r, i, h, Xlsx.S_TH) }; r++
+        listOf(if (multiDay) "Fecha y hora" else "Hora", "Persona", "Cuenta", "Estado", "Monto", "Detectado por").forEachIndexed { i, h -> x.text(r, i, h, Xlsx.S_TH) }; r++
         if (txs.isEmpty()) { x.text(r, 0, "Sin movimientos", Xlsx.S_TD); r++ }
         txs.forEach {
-            x.text(r, 0, hour(it.time), Xlsx.S_TD)
+            x.text(r, 0, tm(it.time), Xlsx.S_TD)
             x.text(r, 1, it.counterparty ?: if (it.direction == Direction.IN) "Recibida" else "Enviada", Xlsx.S_TD)
             x.text(r, 2, (it.bank ?: "") + (it.last4?.let { l -> " ****$l" } ?: ""), Xlsx.S_TD)
             val st = when (it.status) {

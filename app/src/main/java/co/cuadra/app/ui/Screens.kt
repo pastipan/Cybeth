@@ -225,6 +225,8 @@ fun DayCloseCard(txs: List<Tx>) {
     val prefs = remember { Prefs(ctx) }
     val scope = rememberCoroutineScope()
     var confirm by remember { mutableStateOf(false) }
+    var past by remember { mutableStateOf(false) }
+    if (past) PastClosesDialog(txs) { past = false }
     var busy by remember { mutableStateOf(false) }
     var msg by remember { mutableStateOf<String?>(null) }
     var lastAt by remember { mutableStateOf(prefs.lastCloseAt) }
@@ -240,6 +242,7 @@ fun DayCloseCard(txs: List<Tx>) {
             }
             Button(enabled = !busy, onClick = { confirm = true }) { Text(if (busy) "Enviando…" else "Finalizar día") }
         }
+        TextButton(onClick = { past = true }, modifier = Modifier.padding(top = 4.dp)) { Text("📅 Cierres anteriores y por periodo", color = Accent) }
         val auto = if (prefs.autoClose) "Cierre automático: ${co.cuadra.app.service.DayClose.hourLabel(prefs.closeHour)}" else "Cierre automático apagado"
         val last = if (lastAt >= startOfDay()) " · ✓ Enviado hoy ${hour(lastAt)}" else ""
         Text(auto + last, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))

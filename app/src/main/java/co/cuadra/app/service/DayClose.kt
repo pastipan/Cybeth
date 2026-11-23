@@ -27,17 +27,17 @@ object DayClose {
     data class Result(val ok: Boolean, val message: String)
 
     /** Envía el cierre del día que empieza en [dayStart] (por defecto, hoy). */
-    suspend fun send(ctx: Context, dayStart: Long = startOfDay()): Result = withContext(Dispatchers.IO) {
+    suspend fun send(ctx: Context, dayStart: Long = startOfDay(), dayEnd: Long = dayStart + 24 * 60 * 60 * 1000L, periodName: String? = null): Result = withContext(Dispatchers.IO) {
         Repo.init(ctx)
         val prefs = Prefs(ctx)
         // WhatsApp (si está configurado): el mismo resumen que el correo, en texto
         var waMsg = ""
         if (prefs.waLinked) {
-            val w = WhatsApp.send(ctx, DayReport(Repo.txs.value, dayStart).whatsapp())
+            val w = WhatsApp.send(ctx, DayReport(Repo.txs.value, dayStart, dayEnd, periodName).whatsapp())
             waMsg = " · " + w.message
             if (!prefs.emailLinked) {
                 prefs.lastCloseResult = w.message
-                if (w.ok) prefs.lastCloseAt = System.currentTimeMillis()
+                if (w.ok && dayStart == startOfDay()) prefs.lastCloseAt = System.currentTimeMillis()
                 Announcer.notifyEmail(ctx, w.ok, if (w.ok) "Cierre enviado por WhatsApp" else "No se pudo enviar el cierre por WhatsApp", w.message)
                 return@withContext Result(w.ok, w.message)
             }
@@ -48,7 +48,7 @@ object DayClose {
         // Va a los correos de "Avisar por correo" (la jefe). Si no hay ninguno, al mismo Gmail de la empresa.
         val to = prefs.forwardList.ifEmpty { listOf(from) }
         ForwardMail.loadLogo(ctx)
-        val r = DayReport(Repo.txs.value, dayStart)
+        val r = DayReport(Repo.txs.value, dayStart, dayEnd, periodName)
         val res = try {
             ForwardMail.send(
                 from, pass, to, r.subject(), r.html("cid:logo"), r.plain(),
@@ -58,9 +58,9 @@ object DayClose {
         } catch (e: Throwable) {
             Result(false, ForwardMail.explain(e) + waMsg)
         }
-        if (res.ok) prefs.lastCloseAt = System.currentTimeMillis()
+        if (res.ok && dayStart == startOfDay()) prefs.lastCloseAt = System.currentTimeMillis()
         prefs.lastCloseResult = res.message
-        Announcer.notifyEmail(ctx, res.ok, if (res.ok) "Cierre del día enviado" else "No se pudo enviar el cierre", if (res.ok) "${r.subject()}\n${res.message}" else res.message)
+        Announcer.notifyEmail(ctx, res.ok, if (res.ok) "${r.kind} enviado" else "No se pudo enviar el cierre", if (res.ok) "${r.subject()}\n${res.message}" else res.message)
         res
     }
 
