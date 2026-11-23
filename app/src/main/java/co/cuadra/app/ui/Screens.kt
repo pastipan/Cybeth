@@ -389,6 +389,53 @@ private fun DayCloseSettings() {
         }
         prefs.lastCloseResult?.let { Text("Último cierre: $it", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp)) }
     }
+    WhatsAppSettings()
+}
+
+/** Número de WhatsApp para recibir el cierre del día (con CallMeBot). */
+@Composable
+private fun WhatsAppSettings() {
+    val ctx = LocalContext.current
+    val prefs = remember { Prefs(ctx) }
+    val scope = rememberCoroutineScope()
+    var phone by remember { mutableStateOf(prefs.waPhone) }
+    var key by remember { mutableStateOf(prefs.waApiKey) }
+    var help by remember { mutableStateOf(!prefs.waLinked) }
+    var busy by remember { mutableStateOf(false) }
+    var msg by remember { mutableStateOf<String?>(null) }
+    SectionTitle("Cierre por WhatsApp")
+    Panel {
+        Text("El cierre del día también llega por WhatsApp, con el mismo resumen del correo.", color = Muted, fontSize = 13.sp)
+        TextButton(onClick = { help = !help }) { Text(if (help) "Ocultar pasos" else "¿Cómo se activa?", color = Accent) }
+        if (help) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Card2).padding(12.dp)) {
+                listOf(
+                    "Desde el celular que va a RECIBIR el cierre (el de la jefe):",
+                    "1. Guarda en contactos el número +34 644 66 32 62 (CallMeBot).",
+                    "2. Por WhatsApp, mándale: I allow callmebot to send me messages",
+                    "3. En 1 o 2 minutos el bot responde con tu APIKEY (un número).",
+                    "4. Escribe abajo el número de WhatsApp de ella y esa apikey."
+                ).forEach { Text(it, color = TextC, fontSize = 13.sp, modifier = Modifier.padding(vertical = 2.dp)) }
+            }
+        }
+        OutlinedTextField(phone, { phone = it }, label = { Text("Número de WhatsApp (ej. 3001234567)") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+        OutlinedTextField(key, { key = it }, label = { Text("Apikey de CallMeBot") }, singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.fillMaxWidth().padding(top = 6.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 8.dp)) {
+            Button(onClick = { prefs.waPhone = phone.trim(); prefs.waApiKey = key.trim(); msg = "✓ Guardado" }) { Text("Guardar") }
+            OutlinedButton(enabled = !busy && phone.isNotBlank() && key.isNotBlank(), onClick = {
+                prefs.waPhone = phone.trim(); prefs.waApiKey = key.trim()
+                busy = true; msg = "Enviando prueba…"
+                scope.launch {
+                    val r = co.cuadra.app.service.WhatsApp.send(ctx, "✅ *cybeth*: prueba de WhatsApp. Aquí te llegará el cierre del día.")
+                    msg = if (r.ok) "✓ ${r.message}" else r.message
+                    busy = false
+                }
+            }) { Text("Enviar prueba") }
+        }
+        msg?.let { Text(it, color = if (it.startsWith("✓")) Accent else Warn, fontSize = 13.sp, modifier = Modifier.padding(top = 6.dp)) }
+    }
 }
 
 // ---------------------------------------------------------------- INICIO

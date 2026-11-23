@@ -42,12 +42,16 @@ class DayReportTest {
     }
 
     @Test fun archivoExcel() {
-        val csv = String(DayReport(list, day).csv(), Charsets.UTF_8)
-        assertTrue(csv.startsWith("﻿"))
-        assertTrue("Debe tener encabezado de detalle", csv.contains("Hora;Tipo;Estado;Persona;Banco;Cuenta;Monto;Referencia;Detectado por"))
-        assertTrue("Nombre con ; va entre comillas", csv.contains("\"Distribuidora; El Sol\""))
-        assertTrue("Enviada en negativo", csv.contains(";-60000;"))
-        assertTrue("No incluye el día anterior", !csv.contains("Ayer"))
+        val bytes = DayReport(list, day).xlsx(null)
+        val names = mutableListOf<String>(); val sheet = StringBuilder()
+        java.util.zip.ZipInputStream(bytes.inputStream()).use { z ->
+            var e = z.nextEntry
+            while (e != null) { names += e.name; if (e.name == "xl/worksheets/sheet1.xml") sheet.append(String(z.readBytes())); e = z.nextEntry }
+        }
+        assertTrue(names.contains("xl/workbook.xml") && names.contains("xl/styles.xml"))
+        assertTrue("Tiene el nombre cybeth", sheet.contains(">cybeth<"))
+        assertTrue("Enviada en negativo", sheet.contains("<v>-60000.0</v>"))
+        assertTrue("No incluye el día anterior", !sheet.contains("Ayer"))
     }
 
     @Test fun diaVacio() {

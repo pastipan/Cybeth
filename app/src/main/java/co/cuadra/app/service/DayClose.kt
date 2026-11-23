@@ -30,20 +30,33 @@ object DayClose {
     suspend fun send(ctx: Context, dayStart: Long = startOfDay()): Result = withContext(Dispatchers.IO) {
         Repo.init(ctx)
         val prefs = Prefs(ctx)
+        // WhatsApp (si está configurado): el mismo resumen que el correo, en texto
+        var waMsg = ""
+        if (prefs.waLinked) {
+            val w = WhatsApp.send(ctx, DayReport(Repo.txs.value, dayStart).whatsapp())
+            waMsg = " · " + w.message
+            if (!prefs.emailLinked) {
+                prefs.lastCloseResult = w.message
+                if (w.ok) prefs.lastCloseAt = System.currentTimeMillis()
+                Announcer.notifyEmail(ctx, w.ok, if (w.ok) "Cierre enviado por WhatsApp" else "No se pudo enviar el cierre por WhatsApp", w.message)
+                return@withContext Result(w.ok, w.message)
+            }
+        }
         val from = prefs.email
         val pass = prefs.emailPassword
         if (from.isNullOrBlank() || pass.isNullOrBlank()) return@withContext Result(false, "Primero enlaza el Gmail que envía los avisos (Ajustes → Correo electrónico)")
         // Va a los correos de "Avisar por correo" (la jefe). Si no hay ninguno, al mismo Gmail de la empresa.
         val to = prefs.forwardList.ifEmpty { listOf(from) }
+        ForwardMail.loadLogo(ctx)
         val r = DayReport(Repo.txs.value, dayStart)
         val res = try {
             ForwardMail.send(
-                from, pass, to, r.subject(), r.html(), r.plain(),
-                ForwardMail.Attachment(r.fileName, r.csv(), "text/csv; charset=UTF-8")
+                from, pass, to, r.subject(), r.html("cid:logo"), r.plain(),
+                ForwardMail.Attachment(r.fileName, r.xlsx(ForwardMail.logo), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
             )
-            Result(true, "Cierre enviado a ${to.joinToString(", ")}")
+            Result(true, "Cierre enviado a ${to.joinToString(", ")}$waMsg")
         } catch (e: Throwable) {
-            Result(false, ForwardMail.explain(e))
+            Result(false, ForwardMail.explain(e) + waMsg)
         }
         if (res.ok) prefs.lastCloseAt = System.currentTimeMillis()
         prefs.lastCloseResult = res.message

@@ -166,6 +166,18 @@ class Prefs(ctx: Context) {
 
     fun clearNotifLog() = p.edit().remove("notifLog").apply()
 
+    // ---------------- WhatsApp (cierre del día) ----------------
+
+    var waPhone: String
+        get() = p.getString("waPhone", "") ?: ""
+        set(v) = p.edit().putString("waPhone", v).apply()
+
+    var waApiKey: String
+        get() = secure.getString("waApiKey", "") ?: ""
+        set(v) = secure.edit().putString("waApiKey", v).apply()
+
+    val waLinked: Boolean get() = waPhone.isNotBlank() && waApiKey.isNotBlank()
+
     val emailLinked: Boolean get() = !email.isNullOrBlank() && !emailPassword.isNullOrBlank()
 
     fun unlinkEmail() {

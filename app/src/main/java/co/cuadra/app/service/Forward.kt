@@ -67,6 +67,15 @@ object ForwardMail {
         CommandMap.setDefaultCommandMap(mc)
     }
 
+    /** Logo de cybeth para los correos (se carga al iniciar la app). */
+    @Volatile var logo: ByteArray? = null
+
+    fun loadLogo(ctx: Context) {
+        if (logo == null) logo = try {
+            ctx.resources.openRawResource(co.cuadra.app.R.raw.logo_cybeth).use { it.readBytes() }
+        } catch (_: Exception) { null }
+    }
+
     /** Archivo adjunto: nombre, contenido y tipo (ej. "text/csv"). */
     class Attachment(val name: String, val bytes: ByteArray, val mime: String)
 
@@ -96,7 +105,21 @@ object ForwardMail {
             // Texto simple + versión bonita (HTML): si el correo del jefe no muestra HTML, ve el texto
             val alt = MimeMultipart("alternative")
             alt.addBodyPart(MimeBodyPart().apply { setText(plain, "UTF-8", "plain") })
-            alt.addBodyPart(MimeBodyPart().apply { setText(html, "UTF-8", "html") })
+            val logoBytes = logo
+            if (logoBytes != null && html.contains("cid:logo")) {
+                // HTML + logo pegado adentro del correo (se ve aunque no haya internet de imágenes)
+                val related = MimeMultipart("related")
+                related.addBodyPart(MimeBodyPart().apply { setText(html, "UTF-8", "html") })
+                related.addBodyPart(MimeBodyPart().apply {
+                    dataHandler = javax.activation.DataHandler(javax.mail.util.ByteArrayDataSource(logoBytes, "image/png"))
+                    setHeader("Content-ID", "<logo>")
+                    disposition = javax.mail.Part.INLINE
+                    fileName = "cybeth.png"
+                })
+                alt.addBodyPart(MimeBodyPart().apply { setContent(related) })
+            } else {
+                alt.addBodyPart(MimeBodyPart().apply { setText(html, "UTF-8", "html") })
+            }
             if (attachment == null) {
                 setContent(alt)
             } else {
@@ -145,7 +168,9 @@ object ForwardMail {
         return """
 <div style="font-family:Arial,Helvetica,sans-serif;background:#f2f4f7;padding:20px">
   <div style="max-width:460px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e3e7ee">
-    <div style="background:#0FB5A3;padding:14px 18px;color:#ffffff;font-weight:800;font-size:20px">cybeth</div>
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-bottom:4px solid #0FB5A3"><tr>
+      <td style="padding:14px 0 14px 18px;width:44px"><img src="cid:logo" width="40" height="40" alt="cybeth" style="display:block;border-radius:9px"></td>
+      <td style="padding:14px 12px;font-size:24px;font-weight:800;color:#14213D">cybeth</td></tr></table>
     <div style="padding:20px 18px">
       <div style="color:#14213D;font-size:16px;font-weight:700">${esc(title)}</div>
       <div style="font-size:34px;font-weight:800;color:$color;margin:4px 0 6px${if (t.status == TxStatus.RECHAZADA) ";text-decoration:line-through" else ""}">${if (inc) "+" else "-"}${money(t.amount)}</div>
@@ -195,6 +220,7 @@ object ForwardMail {
     /** Envía el aviso de una transferencia a los correos configurados. */
     suspend fun sendFor(ctx: Context, t: Tx): Result = withContext(Dispatchers.IO) {
         val prefs = Prefs(ctx)
+        loadLogo(ctx)
         val from = prefs.email
         val pass = prefs.emailPassword
         val to = prefs.forwardList
