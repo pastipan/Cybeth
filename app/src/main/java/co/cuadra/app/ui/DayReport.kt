@@ -206,43 +206,62 @@ class DayReport(all: List<Tx>, val dayStart: Long, val dayEnd: Long = dayStart +
     /** Excel ordenado: logo y nombre arriba, resumen, por cuenta y la tabla de movimientos. */
     fun xlsx(logoPng: ByteArray? = null): ByteArray {
         val x = Xlsx()
-        // Encabezado con logo (columna A) y nombre
-        x.height(0, 30.0); x.height(1, 20.0); x.height(2, 18.0)
-        x.text(0, 1, "cybeth", Xlsx.S_TITLE)
-        x.text(1, 1, "$kind · $dateLabel", Xlsx.S_SUB)
-        x.text(2, 1, "Generado por cybeth SG", Xlsx.S_SUB)
+        val cols = 0..5
+        // Franja de marca: logo, "cybeth", fecha y el total grande a la derecha
+        listOf(0 to 34.0, 1 to 22.0, 2 to 20.0, 3 to 8.0).forEach { (row, h) -> x.height(row, h) }
+        cols.forEach { c -> if (c != 1 && c != 4) { x.text(0, c, "", Xlsx.S_BAND) } }
+        x.text(0, 1, "cybeth", Xlsx.S_TITLE); x.text(0, 4, if (multiDay) "Entró en el periodo" else "Entró hoy", Xlsx.S_BAND_RIGHT); x.merge("E1:F1")
+        cols.forEach { c -> if (c != 1 && c != 4) x.text(1, c, "", Xlsx.S_BAND) }
+        x.text(1, 1, kind, Xlsx.S_BAND_SUB); x.num(1, 4, totalIn, Xlsx.S_BIG_MONEY); x.merge("E2:F3")
+        cols.forEach { c -> if (c != 1 && c != 4) x.text(2, c, "", Xlsx.S_BAND) }
+        x.text(2, 1, dateLabel.replaceFirstChar { it.uppercase() }, Xlsx.S_BAND_SUB); x.merge("B3:D3")
+        cols.forEach { c -> x.text(3, c, "", Xlsx.S_BAND) }
 
-        var r = 4
-        x.text(r, 0, if (multiDay) "RESUMEN DEL PERIODO" else "RESUMEN DEL DÍA", Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 22.0); r++
-        x.text(r, 0, "Concepto", Xlsx.S_TH); x.text(r, 1, "Valor", Xlsx.S_TH); x.text(r, 2, "Cantidad", Xlsx.S_TH); r++
+        var r = 5
+        fun section(t: String) { x.text(r, 0, t, Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 24.0); r++ }
+        fun head(vararg h: String) { h.forEachIndexed { i, t -> x.text(r, i, t, Xlsx.S_TH) }; x.height(r, 20.0); r++ }
+        var zebra = false
+        fun td(alt: Boolean) = if (alt) Xlsx.S_TD_ALT else Xlsx.S_TD
+        fun tdm(alt: Boolean) = if (alt) Xlsx.S_TD_MONEY_ALT else Xlsx.S_TD_MONEY
+        fun tdn(alt: Boolean) = if (alt) Xlsx.S_TD_NUM_ALT else Xlsx.S_TD_NUM
+
+        section(if (multiDay) "RESUMEN DEL PERIODO" else "RESUMEN DEL DÍA")
+        head("Concepto", "Valor", "Cantidad")
         fun line(label: String, v: Long, n: Int) {
-            x.text(r, 0, label, Xlsx.S_TD); x.num(r, 1, v, Xlsx.S_TD_MONEY); x.num(r, 2, n, Xlsx.S_TD_NUM); r++
+            x.text(r, 0, label, td(zebra)); x.num(r, 1, v, tdm(zebra)); x.num(r, 2, n, tdn(zebra)); x.height(r, 18.0); zebra = !zebra; r++
         }
         line("Entró (aprobado)", totalIn, countIn)
         line("Enviado (aprobado)", -totalOut, countOut)
-        x.text(r, 0, "NETO", Xlsx.S_TH); x.num(r, 1, net, Xlsx.S_TD_MONEY); x.text(r, 2, "", Xlsx.S_TD); r++
+        x.text(r, 0, "NETO", Xlsx.S_TOTAL); x.num(r, 1, net, Xlsx.S_TOTAL_MONEY); x.text(r, 2, "", Xlsx.S_TOTAL); x.height(r, 22.0); r++
+        zebra = false
         line("En proceso", sum(TxStatus.EN_PROCESO), count(TxStatus.EN_PROCESO))
         line("Pendientes por cobrar", sum(TxStatus.PENDIENTE_COBRO), count(TxStatus.PENDIENTE_COBRO))
         line("Rechazadas", sum(TxStatus.RECHAZADA), count(TxStatus.RECHAZADA))
-        if (missingAmount > 0) { x.text(r, 0, "⚠ $missingAmount envío(s) sin monto: el neto puede no ser exacto", Xlsx.S_TD_WARN); x.merge("A${r + 1}:C${r + 1}"); r++ }
+        if (missingAmount > 0) { x.text(r, 0, "⚠ $missingAmount envío(s) sin monto: el neto puede no ser exacto", Xlsx.S_TD_WARN); x.text(r, 1, "", Xlsx.S_TD_WARN); x.text(r, 2, "", Xlsx.S_TD_WARN); x.merge("A${r + 1}:C${r + 1}"); r++ }
 
         r++
-        x.text(r, 0, "POR CUENTA", Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 22.0); r++
-        listOf("Cuenta", "Entró", "Pagos", "Enviado", "Envíos").forEachIndexed { i, h -> x.text(r, i, h, Xlsx.S_TH) }; r++
+        section("POR CUENTA")
+        head("Cuenta", "Entró", "Pagos", "Enviado", "Envíos")
+        zebra = false
         if (byAccount.isEmpty()) { x.text(r, 0, "Sin movimientos", Xlsx.S_TD); r++ }
         byAccount.forEach {
-            x.text(r, 0, it.name, Xlsx.S_TD); x.num(r, 1, it.totalIn, Xlsx.S_TD_MONEY); x.num(r, 2, it.countIn, Xlsx.S_TD_NUM)
-            x.num(r, 3, -it.totalOut, Xlsx.S_TD_MONEY); x.num(r, 4, it.countOut, Xlsx.S_TD_NUM); r++
+            x.text(r, 0, it.name, td(zebra)); x.num(r, 1, it.totalIn, tdm(zebra)); x.num(r, 2, it.countIn, tdn(zebra))
+            x.num(r, 3, -it.totalOut, tdm(zebra)); x.num(r, 4, it.countOut, tdn(zebra)); x.height(r, 18.0); zebra = !zebra; r++
+        }
+        if (byAccount.size > 1) {
+            x.text(r, 0, "TOTAL", Xlsx.S_TOTAL); x.num(r, 1, totalIn, Xlsx.S_TOTAL_MONEY); x.num(r, 2, countIn, Xlsx.S_TOTAL_NUM)
+            x.num(r, 3, -totalOut, Xlsx.S_TOTAL_MONEY); x.num(r, 4, countOut, Xlsx.S_TOTAL_NUM); x.height(r, 22.0); r++
         }
 
         r++
-        x.text(r, 0, "MOVIMIENTOS (${txs.size})", Xlsx.S_SECTION); (1..5).forEach { x.text(r, it, "", Xlsx.S_SECTION) }; x.height(r, 22.0); r++
-        listOf(if (multiDay) "Fecha y hora" else "Hora", "Persona", "Cuenta", "Estado", "Monto", "Detectado por").forEachIndexed { i, h -> x.text(r, i, h, Xlsx.S_TH) }; r++
+        section("MOVIMIENTOS (${txs.size})")
+        head(if (multiDay) "Fecha y hora" else "Hora", "Persona", "Cuenta", "Estado", "Monto", "Detectado por")
+        zebra = false
         if (txs.isEmpty()) { x.text(r, 0, "Sin movimientos", Xlsx.S_TD); r++ }
         txs.forEach {
-            x.text(r, 0, tm(it.time), Xlsx.S_TD)
-            x.text(r, 1, it.counterparty ?: if (it.direction == Direction.IN) "Recibida" else "Enviada", Xlsx.S_TD)
-            x.text(r, 2, (it.bank ?: "") + (it.last4?.let { l -> " ****$l" } ?: ""), Xlsx.S_TD)
+            x.text(r, 0, tm(it.time), td(zebra))
+            x.text(r, 1, it.counterparty ?: if (it.direction == Direction.IN) "Recibida" else "Enviada", td(zebra))
+            x.text(r, 2, (it.bank ?: "") + (it.last4?.let { l -> " ****$l" } ?: ""), td(zebra))
             val st = when (it.status) {
                 TxStatus.APROBADA -> Xlsx.S_TD_OK
                 TxStatus.RECHAZADA -> Xlsx.S_TD_BAD
@@ -250,10 +269,12 @@ class DayReport(all: List<Tx>, val dayStart: Long, val dayEnd: Long = dayStart +
             }
             x.text(r, 3, Wording.statusLabel(it), st)
             if (it.amount == 0L) x.text(r, 4, "sin monto", Xlsx.S_TD_WARN)
-            else x.num(r, 4, if (it.direction == Direction.IN) it.amount else -it.amount, Xlsx.S_TD_MONEY)
-            x.text(r, 5, it.source, Xlsx.S_TD)
-            r++
+            else x.num(r, 4, if (it.direction == Direction.IN) it.amount else -it.amount, tdm(zebra))
+            x.text(r, 5, it.source, td(zebra))
+            x.height(r, 18.0); zebra = !zebra; r++
         }
-        return x.build("Cierre $fileDate", listOf(26.0, 26.0, 24.0, 18.0, 16.0, 16.0), logoPng)
+        r++
+        x.text(r, 0, "cybeth SG · Cierre automático · " + SimpleDateFormat("d MMM yyyy h:mm a", Locale("es", "CO")).format(Date()), Xlsx.S_FOOT); x.merge("A${r + 1}:F${r + 1}")
+        return x.build("Cierre $fileDate", listOf(24.0, 28.0, 24.0, 20.0, 18.0, 18.0), logoPng)
     }
 }
